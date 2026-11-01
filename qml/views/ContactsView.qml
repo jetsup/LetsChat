@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Controls.Basic as Basic
+import QtQuick.Controls.Material
 import LetsChat
 
 Rectangle {
@@ -13,6 +14,88 @@ Rectangle {
     signal openSettings()
     signal openBluetooth()
     signal peerChosen(string userId)
+    signal profileRequested(string userId)
+
+    // Tap on a picture: big picture (or initials) with "message" and "info" buttons.
+    Popup {
+        id: quickView
+        property string peerId
+        property string peerName
+        property string peerAvatar
+        property bool peerOnline
+        parent: Overlay.overlay
+        x: parent ? (parent.width - width) / 2 : 0
+        y: parent ? Math.max(60, (parent.height - height) / 3) : 0
+        width: Math.min(parent ? parent.width - 48 : 320, 320)
+        modal: true
+        focus: true
+        padding: 24
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onOpened: forceActiveFocus()
+        // A popup hands focus back to whatever had it before - a text field, which pops the keyboard
+        // up (and keeps it up).  Give focus to a plain item instead and make sure no keyboard stays.
+        onClosed: { root.forceActiveFocus(); Qt.inputMethod.hide() }
+        background: Rectangle { radius: Theme.radius; color: Theme.surface; border.color: Theme.border }
+
+        ColumnLayout {
+            width: parent.width
+            spacing: 14
+
+            Avatar {
+                Layout.alignment: Qt.AlignHCenter
+                name: quickView.peerName
+                seed: quickView.peerId
+                source: quickView.peerAvatar
+                size: Math.min(220, quickView.width - 48)
+            }
+            Label {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                text: quickView.peerName
+                elide: Text.ElideRight
+                font.pixelSize: 20
+                font.weight: Font.DemiBold
+                color: Theme.text
+            }
+            Label {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                text: quickView.peerOnline ? qsTr("Online") : qsTr("Offline")
+                font.pixelSize: 13
+                color: quickView.peerOnline ? Theme.success : Theme.textSecondary
+            }
+            RowLayout {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 28
+                ColumnLayout {
+                    spacing: 4
+                    IconButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        implicitWidth: 52
+                        implicitHeight: 52
+                        iconName: "chat"
+                        iconSize: 26
+                        iconColor: Theme.accent
+                        onClicked: { quickView.close(); root.peerChosen(quickView.peerId) }
+                    }
+                    Label { Layout.alignment: Qt.AlignHCenter; text: qsTr("Message"); font.pixelSize: 12; color: Theme.textSecondary }
+                }
+                ColumnLayout {
+                    spacing: 4
+                    IconButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        implicitWidth: 52
+                        implicitHeight: 52
+                        iconName: "info"
+                        iconSize: 26
+                        iconColor: Theme.accent
+                        onClicked: { quickView.close(); root.profileRequested(quickView.peerId) }
+                    }
+                    Label { Layout.alignment: Qt.AlignHCenter; text: qsTr("Info"); font.pixelSize: 12; color: Theme.textSecondary }
+                }
+            }
+        }
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -68,7 +151,6 @@ Rectangle {
         Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 52
-            visible: Peers.peerCount > 3
 
             Basic.TextField {
                 id: searchField
@@ -134,6 +216,13 @@ Rectangle {
                 width: list.width
                 selected: userId === root.selectedId
                 onClicked: root.peerChosen(userId)
+                onAvatarClicked: {
+                    quickView.peerId = userId
+                    quickView.peerName = displayName
+                    quickView.peerAvatar = avatarUrl
+                    quickView.peerOnline = isOnline
+                    quickView.open()
+                }
             }
 
             ColumnLayout {

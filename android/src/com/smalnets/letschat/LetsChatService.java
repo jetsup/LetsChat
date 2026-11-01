@@ -31,7 +31,6 @@ public class LetsChatService extends Service {
     private static final int SERVICE_NOTIFICATION_ID = 1;
 
     private WifiManager.MulticastLock multicastLock;
-    private PowerManager.WakeLock wakeLock;
 
     // ---------------------------------------------------------------- static API (called from C++ via JNI)
 
@@ -95,6 +94,33 @@ public class LetsChatService extends Service {
         }
     }
 
+    /** Intent for the system camera app that stores the picture at {@code outPath}. */
+    public static Intent captureIntent(Context context, String outPath) {
+        java.io.File file = new java.io.File(outPath);
+        if (file.getParentFile() != null) file.getParentFile().mkdirs();
+        Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                context, context.getPackageName() + ".fileprovider", file);
+        Intent intent = new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE);
+        intent.putExtra(android.provider.MediaStore.EXTRA_OUTPUT, uri);
+        intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        intent.setClipData(android.content.ClipData.newRawUri("", uri));
+        return intent;
+    }
+
+    public static String manufacturer() {
+        return Build.MANUFACTURER == null ? "" : Build.MANUFACTURER;
+    }
+
+    public static void openAppSettings(Activity activity) {
+        try {
+            Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+            i.setData(Uri.parse("package:" + activity.getPackageName()));
+            activity.startActivity(i);
+        } catch (Exception e) {
+            Log.e(TAG, "Cannot open app settings", e);
+        }
+    }
+
     /** Back button behaviour: hide the UI instead of destroying it so sockets stay alive. */
     public static void moveToBackground(Activity activity) {
         activity.moveTaskToBack(true);
@@ -114,6 +140,9 @@ public class LetsChatService extends Service {
         try {
             if (Build.VERSION.SDK_INT >= 29) {
                 int type = Build.VERSION.SDK_INT >= 30 ? ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE : 0;
+                if (Build.VERSION.SDK_INT >= 34) {
+                    type |= ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING;
+                }
                 startForeground(SERVICE_NOTIFICATION_ID, n, type);
             } else {
                 startForeground(SERVICE_NOTIFICATION_ID, n);
@@ -122,7 +151,6 @@ public class LetsChatService extends Service {
             Log.e(TAG, "startForeground failed", e);
         }
         acquireMulticastLock();
-        acquireWakeLock();
         return START_STICKY;
     }
 
@@ -130,9 +158,6 @@ public class LetsChatService extends Service {
     public void onDestroy() {
         if (multicastLock != null && multicastLock.isHeld()) {
             multicastLock.release();
-        }
-        if (wakeLock != null && wakeLock.isHeld()) {
-            wakeLock.release();
         }
         super.onDestroy();
     }
@@ -143,20 +168,6 @@ public class LetsChatService extends Service {
     }
 
     // ---------------------------------------------------------------- helpers
-
-    /** Partial wake lock: keeps the CPU running so sockets keep being served with the screen off. */
-    private void acquireWakeLock() {
-        try {
-            if (wakeLock == null) {
-                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "letschat:service");
-                wakeLock.setReferenceCounted(false);
-            }
-            if (!wakeLock.isHeld()) wakeLock.acquire();
-        } catch (Exception e) {
-            Log.e(TAG, "Wake lock failed", e);
-        }
-    }
 
     private void acquireMulticastLock() {
         try {

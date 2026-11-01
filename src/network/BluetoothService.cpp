@@ -4,6 +4,7 @@
 #include <QBluetoothLocalDevice>
 #include <QBluetoothPermission>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QFile>
 #include <QDebug>
 #include <QJsonDocument>
@@ -88,8 +89,11 @@ void BluetoothService::setEnabled(bool on)
 }
 
 void BluetoothService::setLocalInfo(const QString &userId, const QString &alias,
-                                    const QString &deviceName)
+                                    const QString &deviceName, const QString &avatarHash,
+                                    const QString &avatarPath)
 {
+    m_localAvatarHash = avatarHash;
+    m_localAvatarPath = avatarPath;
     m_localUserId = userId;
     m_localAlias = alias;
     m_localDeviceName = deviceName;
@@ -357,9 +361,14 @@ void BluetoothService::adopt(QBluetoothSocket *socket)
         const auto it = m_links.constFind(socket);
         if (it == m_links.constEnd() || it->userId.isEmpty())
             return;
-        emit fileReceived(it->userId, it->alias, h["id"].toString(), h["kind"].toString(),
-                          h["name"].toString(), qint64(h["size"].toDouble()), path,
-                          h["timestamp"].toString());
+        if (h["kind"].toString() == "avatar") {
+            emit avatarReceived(it->userId, path, h["id"].toString());
+            return;
+        }
+        QJsonObject header = h;                   // trust the link, not the frame, for the sender
+        header["fromUserId"] = it->userId;
+        header["alias"] = it->alias;
+        emit fileReceived(path, header);
     });
     connect(socket, &QBluetoothSocket::disconnected, this, [this, socket] { dropLink(socket); });
     connect(socket, &QBluetoothSocket::errorOccurred, this, [this, socket](QBluetoothSocket::SocketError) {
@@ -371,7 +380,8 @@ void BluetoothService::adopt(QBluetoothSocket *socket)
                        {"v", AppConfig::PROTOCOL_VERSION},
                        {"userId", m_localUserId},
                        {"alias", m_localAlias},
-                       {"deviceName", m_localDeviceName}});
+                       {"deviceName", m_localDeviceName},
+                       {"av", m_localAvatarHash}});
     emit devicesChanged();
 }
 
@@ -417,7 +427,20 @@ void BluetoothService::handleFrame(QBluetoothSocket *socket, const QJsonObject &
         m_byUser.insert(userId, socket);
         rememberAddress(link.address);
         qInfo() << "Bluetooth: peer up" << link.alias << link.address;
-        emit peerUp(userId, link.alias, msg["deviceName"].toString(), link.address);
+        emit peerUp(userId, link.alias, msg["deviceName"].toString(), link.address, msg["av"].toString());
+    } else if (type == "delete") {
+        if (!link.userId.isEmpty())
+            emit deleteReceived(link.userId, msg["target"].toString());
+    } else if (type == "avatar_get") {
+        QFile f(m_localAvatarPath);
+        if (m_localAvatarPath.isEmpty() || !f.open(QIODevice::ReadOnly))
+            return;
+        const QByteArray bytes = f.readAll();
+        const QString hash = QString::fromLatin1(
+            QCryptographicHash::hash(bytes, QCryptographicHash::Sha1).toHex().left(12));
+        sendFrame(socket, {{"type", "file"}, {"id", hash}, {"fromUserId", m_localUserId},
+                           {"kind", "avatar"}, {"name", "avatar.jpg"}, {"size", bytes.size()}});
+        socket->write(bytes);
     } else if (type == "text") {
         if (link.userId.isEmpty())
             return;     // ignore data before the hello
@@ -447,7 +470,8 @@ bool BluetoothService::sendText(const QString &userId, const QString &messageId,
 bool BluetoothService::sendFile(const QString &userId, const QString &messageId,
                                 const QString &fromUserId, const QString &alias,
                                 const QString &kind, const QString &filePath,
-                                const QString &fileName, qint64 size, const QString &timestamp)
+                                const QString &fileName, qint64 size, const QString &timestamp,
+                                const QString &caption, int durationMs)
 {
     QBluetoothSocket *s = m_byUser.value(userId, nullptr);
     if (!s || s->state() != QBluetoothSocket::SocketState::ConnectedState)
@@ -460,12 +484,28 @@ bool BluetoothService::sendFile(const QString &userId, const QString &messageId,
     s->write(QJsonDocument(QJsonObject{{"type", "file"}, {"v", AppConfig::PROTOCOL_VERSION},
                                        {"id", messageId}, {"fromUserId", fromUserId},
                                        {"alias", alias}, {"kind", kind}, {"name", fileName},
-                                       {"size", double(size)}, {"timestamp", timestamp}})
+                                       {"size", double(size)}, {"timestamp", timestamp},
+                                       {"caption", caption}, {"duration", durationMs}})
                  .toJson(QJsonDocument::Compact) + "\n");
     auto *pump = new FilePump(s, file, s);
     connect(pump, &FilePump::finished, this,
             [this, messageId, pump](bool ok) { emit sendFinished(messageId, ok); pump->deleteLater(); });
     pump->start();
+    return true;
+}
+
+void BluetoothService::requestAvatar(const QString &userId)
+{
+    if (QBluetoothSocket *s = m_byUser.value(userId, nullptr))
+        sendFrame(s, {{"type", "avatar_get"}});
+}
+
+bool BluetoothService::sendDelete(const QString &userId, const QString &target, const QString &from)
+{
+    QBluetoothSocket *s = m_byUser.value(userId, nullptr);
+    if (!s || s->state() != QBluetoothSocket::SocketState::ConnectedState)
+        return false;
+    sendFrame(s, {{"type", "delete"}, {"target", target}, {"fromUserId", from}});
     return true;
 }
 

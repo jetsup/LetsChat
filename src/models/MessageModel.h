@@ -15,9 +15,10 @@ struct Message
     int messageType = 0;      // 0: text
     QDateTime timestamp;
     bool isOwnMessage = false;
-    int status = 1;           // 0: sending, 1: sent/received, 2: failed
-    // for messageType 1 (image) and 2 (file) `content` is {"name","size","path"} JSON
-    QString attachmentName, attachmentPath;
+    int status = 1;           // 0: sending, 1: sent/received, 2: failed, 3: queued
+    // for messageType 1 (image), 2 (file) and 3 (voice note) `content` is {"name","size","path"} JSON
+    QString attachmentName, attachmentPath, caption;
+    int durationMs = 0;
     qint64 attachmentSize = 0;
 };
 
@@ -41,7 +42,10 @@ public:
         AttachmentNameRole,
         AttachmentPathRole,
         AttachmentUrlRole,
-        AttachmentSizeRole
+        AttachmentSizeRole,
+        CaptionRole,
+        DurationRole,
+        DurationTextRole
     };
 
     explicit MessageModel(QObject *parent = nullptr);
@@ -54,12 +58,16 @@ public:
     void addMessage(const QString &messageId, const QString &fromUserId, const QString &toUserId,
                     const QString &content, int messageType, const QString &timestamp, int status = 1);
     void setStatus(const QString &messageId, int status);
+    void removeMessage(const QString &messageId);
+    /** Rows whose text, caption or file name contains `query` (case-insensitive), oldest first. */
+    QVariantList search(const QString &query) const;
     void setMessages(const QVariantList &rows);   // replaces the whole conversation
     void clear();
 
     /** Text shown in lists / notifications for a message of the given type. */
     static QString preview(int messageType, const QString &content);
-    static QString attachmentJson(const QString &name, qint64 size, const QString &path);
+    static QString attachmentJson(const QString &name, qint64 size, const QString &path,
+                                  const QString &caption = {}, int durationMs = 0);
 
 signals:
     void countChanged();

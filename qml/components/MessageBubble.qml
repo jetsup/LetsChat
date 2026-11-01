@@ -8,6 +8,8 @@ import LetsChat
 Item {
     id: root
 
+    required property int index
+    required property string messageId
     required property string content
     required property bool isOwnMessage
     required property string timeString
@@ -16,11 +18,20 @@ Item {
     required property string attachmentName
     required property string attachmentUrl
     required property string attachmentSize
+    required property string caption
+    required property string durationText
+    property bool playing: false          // voice notes: set by the chat view
+    property real playProgress: 0
+    signal voiceToggled(string messageId, url source)
+    property bool searchMatch: false      // matches the in-chat search
+    property bool searchCurrent: false    // the match the user is looking at
+    signal contextRequested(string messageId, bool own, string text)
     property real maxBubbleWidth: Math.min(width * 0.78, 520)
     signal imageClicked(url source)
 
     readonly property bool isImage: messageType === 1
     readonly property bool isFile: messageType === 2
+    readonly property bool isVoice: messageType === 3
     readonly property real imageWidth: Math.min(260, maxBubbleWidth - 8)
 
     implicitHeight: bubble.height + 6
@@ -36,6 +47,7 @@ Item {
         readonly property real pad: root.isImage ? 4 : 12
         readonly property real contentW: root.isImage ? root.imageWidth
                                        : root.isFile ? Math.min(fileRow.implicitWidth, root.maxBubbleWidth - 24)
+                                       : root.isVoice ? 220
                                        : text.implicitWidth
         width: Math.min(root.maxBubbleWidth, Math.max(contentW, meta.implicitWidth) + pad * 2)
         height: col.implicitHeight + (root.isImage ? 8 : 16)
@@ -44,8 +56,22 @@ Item {
         topLeftRadius: root.isOwnMessage ? 16 : 4
         topRightRadius: root.isOwnMessage ? 4 : 16
         color: root.isOwnMessage ? Theme.bubbleOwn : Theme.bubbleOther
-        border.width: root.isOwnMessage || Theme.dark ? 0 : 1
-        border.color: Theme.border
+        border.width: root.searchCurrent ? 3 : (root.searchMatch ? 2 : (root.isOwnMessage || Theme.dark ? 0 : 1))
+        border.color: root.searchCurrent ? Theme.warning : (root.searchMatch ? Qt.darker(Theme.warning, 1.3) : Theme.border)
+
+        // right click (desktop) / long press (touch) -> message menu
+        TapHandler {
+            acceptedButtons: Qt.RightButton
+            onTapped: root.contextRequested(root.messageId, root.isOwnMessage,
+                                            root.messageType === 0 ? root.content : root.caption)
+        }
+        TapHandler {
+            acceptedButtons: Qt.LeftButton
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            longPressThreshold: 0.5
+            onLongPressed: root.contextRequested(root.messageId, root.isOwnMessage,
+                                                 root.messageType === 0 ? root.content : root.caption)
+        }
 
         Column {
             id: col
@@ -89,6 +115,32 @@ Item {
                     text: qsTr("Image unavailable")
                     color: Theme.textSecondary
                 }
+            }
+
+            // ---- caption of a photo
+            Label {
+                visible: root.isImage && root.caption !== ""
+                width: parent.width - 8
+                x: 4
+                height: visible ? implicitHeight : 0
+                topPadding: 4
+                text: root.caption
+                wrapMode: Text.Wrap
+                font.pixelSize: 15
+                textFormat: Text.PlainText
+                color: root.isOwnMessage ? Theme.bubbleOwnText : Theme.bubbleOtherText
+            }
+
+            // ---- voice note
+            VoiceNote {
+                visible: root.isVoice
+                width: parent.width
+                height: visible ? implicitHeight : 0
+                own: root.isOwnMessage
+                playing: root.playing
+                progress: root.playProgress
+                durationText: root.durationText
+                onToggled: root.voiceToggled(root.messageId, root.attachmentUrl)
             }
 
             // ---- generic file
@@ -142,6 +194,12 @@ Item {
                     text: qsTr("Not delivered")
                     font.pixelSize: 11
                     color: "#ffd0d0"
+                }
+                Label {
+                    visible: root.isOwnMessage && root.status === 3
+                    text: qsTr("Waiting to send…")
+                    font.pixelSize: 11
+                    color: Qt.rgba(1, 1, 1, 0.7)
                 }
                 Label {
                     visible: root.isOwnMessage && root.status === 0

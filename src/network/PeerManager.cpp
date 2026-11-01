@@ -1,5 +1,6 @@
 #include "PeerManager.h"
 #include <QDebug>
+#include <QFile>
 #include <QRegularExpression>
 
 PeerManager::PeerManager(DatabaseManager *db, QObject *parent)
@@ -11,7 +12,7 @@ PeerManager::PeerManager(DatabaseManager *db, QObject *parent)
 {
     m_proxy->setSourceModel(m_peerModel);
     m_proxy->setSortRole(PeerListModel::SortKeyRole);
-    m_proxy->setFilterRole(PeerListModel::DisplayNameRole);
+    m_proxy->setFilterRole(PeerListModel::SearchTextRole);   // nickname, name, device and IP
     m_proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
     m_proxy->setDynamicSortFilter(true);
     m_proxy->sort(0, Qt::DescendingOrder);
@@ -20,6 +21,7 @@ PeerManager::PeerManager(DatabaseManager *db, QObject *parent)
     connect(m_discovery, &DiscoveryService::peerLost, this, &PeerManager::onPeerLost);
     connect(m_discovery, &DiscoveryService::runningChanged, this, &PeerManager::scanningChanged);
     connect(m_peerModel, &PeerListModel::onlineCountChanged, this, &PeerManager::onlineCountChanged);
+    connect(m_peerModel, &PeerListModel::peerChanged, this, &PeerManager::peerChanged);
     connect(m_peerModel, &QAbstractItemModel::rowsInserted, this, &PeerManager::onlineCountChanged);
 }
 
@@ -33,10 +35,35 @@ void PeerManager::setFilterText(const QString &text)
 }
 
 void PeerManager::setLocalIdentity(const QString &userId, const QString &alias,
-                                   const QString &deviceName)
+                                   const QString &deviceName, const QString &avatarHash)
 {
     m_localUserId = userId;
-    m_discovery->setLocalInfo(userId, alias, deviceName);
+    m_discovery->setLocalInfo(userId, alias, deviceName, avatarHash);
+}
+
+void PeerManager::setNickname(const QString &userId, const QString &nickname)
+{
+    m_peerModel->setNickname(userId, nickname);
+    m_db->setNickname(userId, nickname.trimmed());
+}
+
+void PeerManager::setAvatar(const QString &userId, const QString &hash)
+{
+    m_peerModel->setAvatarHash(userId, hash);
+    m_db->setAvatarHash(userId, hash);
+}
+
+void PeerManager::checkAvatar(const QString &userId, const QString &hash, const QString &ip)
+{
+    const Peer *p = m_peerModel->find(userId);
+    if (!p || p->avatarHash == hash)
+        return;
+    if (hash.isEmpty()) {                    // the peer removed its picture
+        QFile::remove(PeerListModel::avatarPath(userId));
+        setAvatar(userId, {});
+        return;
+    }
+    emit avatarNeeded(userId, ip);
 }
 
 void PeerManager::loadKnownPeers()
@@ -48,7 +75,9 @@ void PeerManager::loadKnownPeers()
             continue;
         m_peerModel->loadKnown(p["userId"].toString(), p["alias"].toString(),
                                p["deviceName"].toString(), p["ipAddress"].toString(),
-                               p["btAddress"].toString(), p["lastSeen"].toString());
+                               p["btAddress"].toString(), p["lastSeen"].toString(),
+                               p["nickname"].toString(), p["firstSeen"].toString(),
+                               p["avatarHash"].toString());
     }
 }
 
@@ -59,7 +88,8 @@ void PeerManager::handleNetworkChange()
 }
 
 void PeerManager::onPeerDiscovered(const QString &userId, const QString &alias,
-                                   const QString &deviceName, const QString &ipAddress)
+                                   const QString &deviceName, const QString &ipAddress,
+                                   const QString &avatarHash)
 {
     if (userId == m_localUserId)
         return;
@@ -67,6 +97,7 @@ void PeerManager::onPeerDiscovered(const QString &userId, const QString &alias,
     const bool wasOnline = before && before->lanOnline;
     m_peerModel->upsertLan(userId, alias, deviceName, ipAddress);
     m_db->savePeer(userId, alias, deviceName, ipAddress, {});
+    checkAvatar(userId, avatarHash, ipAddress);
     if (!wasOnline)
         emit peerOnline(userId);
 }
@@ -93,7 +124,8 @@ void PeerManager::onLanPeerSeen(const QString &userId, const QString &alias, con
 }
 
 void PeerManager::onBluetoothPeerUp(const QString &userId, const QString &alias,
-                                    const QString &deviceName, const QString &address)
+                                    const QString &deviceName, const QString &address,
+                                    const QString &avatarHash)
 {
     if (userId == m_localUserId)
         return;
@@ -101,6 +133,7 @@ void PeerManager::onBluetoothPeerUp(const QString &userId, const QString &alias,
     const bool wasOnline = before && before->isOnline();
     m_peerModel->upsertBluetooth(userId, alias, deviceName, address);
     m_db->savePeer(userId, alias, deviceName, {}, address);
+    checkAvatar(userId, avatarHash, {});
     if (!wasOnline)
         emit peerOnline(userId);
 }

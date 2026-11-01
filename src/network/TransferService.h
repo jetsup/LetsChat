@@ -34,14 +34,24 @@ public:
                   const QString &alias, const QString &content, const QString &timestamp);
     void sendFile(const QString &targetIp, const QString &messageId, const QString &fromUserId,
                   const QString &alias, const QString &kind, const QString &filePath,
-                  const QString &fileName, qint64 size, const QString &timestamp);
+                  const QString &fileName, qint64 size, const QString &timestamp,
+                  const QString &caption = {}, int durationMs = 0);
+
+    void sendDelete(const QString &targetIp, const QString &targetMessageId, const QString &fromUserId);
+
+    // profile pictures
+    void setLocalUser(const QString &userId) { m_localUserId = userId; }
+    void setLocalAvatar(const QString &path) { m_avatarPath = path; }
+    void requestAvatar(const QString &targetIp, const QString &peerUserId);
 
 signals:
+    /** The peer asked us to delete one of *its* messages from our history. */
+    void deleteReceived(const QString &fromUserId, const QString &targetMessageId);
+    void avatarReceived(const QString &peerUserId, const QString &path, const QString &hash);
     void textReceived(const QString &fromUserId, const QString &alias, const QString &messageId,
                       const QString &content, const QString &timestamp, const QString &senderIp);
-    void fileReceived(const QString &fromUserId, const QString &alias, const QString &messageId,
-                      const QString &kind, const QString &fileName, qint64 size,
-                      const QString &savedPath, const QString &timestamp, const QString &senderIp);
+    /** `header` is the sender's file frame (id, fromUserId, alias, kind, name, size, caption, duration…). */
+    void fileReceived(const QString &savedPath, const QJsonObject &header, const QString &senderIp);
     void sendFinished(const QString &messageId, bool ok, const QString &error);
 
 private:
@@ -51,6 +61,8 @@ private:
 
     QTcpServer *m_server;
     QString m_receiveDir;
+    QString m_localUserId;
+    QString m_avatarPath;
     QTimer *m_retryTimer;
     QList<QTcpSocket *> m_incoming;
 };

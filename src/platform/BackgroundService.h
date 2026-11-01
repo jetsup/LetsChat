@@ -1,7 +1,9 @@
 #ifndef BACKGROUNDSERVICE_H
 #define BACKGROUNDSERVICE_H
 
+#include <QDebug>
 #include <QObject>
+#include <atomic>
 #include <QString>
 
 class QSystemTrayIcon;
@@ -18,6 +20,8 @@ class BackgroundService : public QObject
     Q_PROPERTY(bool runInBackground READ runInBackground WRITE setRunInBackground NOTIFY runInBackgroundChanged)
     Q_PROPERTY(bool serviceRunning READ serviceRunning NOTIFY serviceRunningChanged)
     Q_PROPERTY(bool trayAvailable READ trayAvailable CONSTANT)
+    Q_PROPERTY(int backDepth READ depth WRITE setBackDepth NOTIFY backDepthChanged)
+    Q_PROPERTY(QString manufacturer READ manufacturer CONSTANT)
     Q_PROPERTY(bool batteryUnrestricted READ batteryUnrestricted NOTIFY batteryChanged)
 
 public:
@@ -29,6 +33,7 @@ public:
     bool serviceRunning() const { return m_serviceRunning; }
     bool trayAvailable() const { return m_tray != nullptr; }
     bool batteryUnrestricted() const;
+    QString manufacturer() const;
 
     /** Called once the app is up. Starts the foreground service / tray as configured. */
     void start();
@@ -37,8 +42,14 @@ public:
 
     /** True when closing the main window should only hide it. */
     Q_INVOKABLE bool shouldHideOnClose() const;
+    /** QML tells us how many back steps it can take (page / open chat / dialog); read by the Activity. */
+    void setBackDepth(int depth) { if (s_backDepth.exchange(depth) != depth) emit backDepthChanged(); }
+    int depth() const { return s_backDepth; }
+    static int backDepth() { return s_backDepth; }
+    static void requestBack();
     Q_INVOKABLE void moveToBackground();
     Q_INVOKABLE void requestBatteryExemption();
+    Q_INVOKABLE void openAppSettings();
     Q_INVOKABLE void quit();
 
 signals:
@@ -46,6 +57,8 @@ signals:
     void serviceRunningChanged();
     void batteryChanged();
     void showWindowRequested();
+    void backRequested();
+    void backDepthChanged();
 
 private:
     void startService();
@@ -54,6 +67,8 @@ private:
     bool m_runInBackground = true;
     bool m_serviceRunning = false;
     bool m_quitting = false;
+    static inline std::atomic<int> s_backDepth{0};
+    static inline BackgroundService *s_instance = nullptr;
     QSystemTrayIcon *m_tray = nullptr;
 };
 

@@ -6,6 +6,7 @@
 #include <QSettings>
 
 #ifdef Q_OS_ANDROID
+#include <QJniEnvironment>
 #include <QJniObject>
 #else
 #include <QAction>
@@ -21,6 +22,7 @@ static const char *kServiceClass = "com/smalnets/letschat/LetsChatService";
 
 BackgroundService::BackgroundService(QObject *parent) : QObject(parent)
 {
+    s_instance = this;
     m_runInBackground = QSettings().value("app/runInBackground", true).toBool();
 }
 
@@ -31,8 +33,33 @@ BackgroundService::~BackgroundService()
 #endif
 }
 
+void BackgroundService::requestBack()
+{
+    if (s_instance)
+        QMetaObject::invokeMethod(s_instance, &BackgroundService::backRequested, Qt::QueuedConnection);
+}
+
+#ifdef Q_OS_ANDROID
+// JNI bridge for MainActivity (called on the Android UI thread, so only touch atomics/queued calls)
+static jint jniBackDepth(JNIEnv *, jclass) { return BackgroundService::backDepth(); }
+static void jniBackRequested(JNIEnv *, jclass) { BackgroundService::requestBack(); }
+#endif
+
 void BackgroundService::start()
 {
+#ifdef Q_OS_ANDROID
+    static bool registered = false;
+    if (!registered) {
+        registered = true;
+        const JNINativeMethod methods[] = {
+            {"nativeBackDepth", "()I", reinterpret_cast<void *>(jniBackDepth)},
+            {"nativeBackRequested", "()V", reinterpret_cast<void *>(jniBackRequested)},
+        };
+        QJniEnvironment env;
+        if (!env.registerNativeMethods("com/smalnets/letschat/MainActivity", methods, 2))
+            qWarning() << "Could not register the Android back bridge";
+    }
+#endif
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this,
             [](Qt::ApplicationState st) { qInfo() << "App state:" << st; });
 #ifndef Q_OS_ANDROID
@@ -167,6 +194,27 @@ void BackgroundService::requestBatteryExemption()
             QJniObject::callStaticMethod<void>(kServiceClass, "requestIgnoreBatteryOptimizations",
                                                "(Landroid/app/Activity;)V", activity.object());
         emit batteryChanged();
+    });
+#endif
+}
+
+QString BackgroundService::manufacturer() const
+{
+#ifdef Q_OS_ANDROID
+    return QJniObject::callStaticObjectMethod(kServiceClass, "manufacturer", "()Ljava/lang/String;").toString();
+#else
+    return {};
+#endif
+}
+
+void BackgroundService::openAppSettings()
+{
+#ifdef Q_OS_ANDROID
+    QNativeInterface::QAndroidApplication::runOnAndroidMainThread([] {
+        QJniObject activity = QNativeInterface::QAndroidApplication::context();
+        if (activity.isValid())
+            QJniObject::callStaticMethod<void>(kServiceClass, "openAppSettings",
+                                               "(Landroid/app/Activity;)V", activity.object());
     });
 #endif
 }

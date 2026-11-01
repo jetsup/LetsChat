@@ -28,8 +28,14 @@ public:
     QString filterText() const { return m_filter; }
     void setFilterText(const QString &text);
 
-    void setLocalIdentity(const QString &userId, const QString &alias, const QString &deviceName);
+    void setLocalIdentity(const QString &userId, const QString &alias, const QString &deviceName,
+                          const QString &avatarHash = {});
+    Q_INVOKABLE QVariantMap info(const QString &userId) const { return m_peerModel->info(userId); }
+    /** The name *we* give a peer (nickname) wins over what the peer broadcasts. */
+    Q_INVOKABLE void setNickname(const QString &userId, const QString &nickname);
+    void setAvatar(const QString &userId, const QString &hash);
     void startScanning() { m_discovery->startDiscovery(); }
+    void setBackground(bool background) { m_discovery->setBackground(background); }
     void stopScanning() { m_discovery->stopDiscovery(); }
     /** We joined a different LAN: everyone seen on LAN is unreachable until re-announced. */
     void handleNetworkChange();
@@ -37,7 +43,7 @@ public:
 
 public slots:
     void onBluetoothPeerUp(const QString &userId, const QString &alias, const QString &deviceName,
-                           const QString &address);
+                           const QString &address, const QString &avatarHash);
     void onBluetoothPeerDown(const QString &userId);
     /** Used when a LAN message arrives from a peer we have not discovered (yet). */
     void onLanPeerSeen(const QString &userId, const QString &alias, const QString &ip);
@@ -48,10 +54,14 @@ signals:
     void filterTextChanged();
     void peerOnline(const QString &userId);
     void peerOffline(const QString &userId);
+    void avatarNeeded(const QString &userId, const QString &ip);   // ip empty -> via Bluetooth
+    void peerChanged(const QString &userId);
 
 private:
     void onPeerDiscovered(const QString &userId, const QString &alias, const QString &deviceName,
-                          const QString &ipAddress);
+                          const QString &ipAddress, const QString &avatarHash);
+    /** The peer's picture differs from the one we have (empty ip = reachable over Bluetooth). */
+    void checkAvatar(const QString &userId, const QString &advertisedHash, const QString &ip);
     void onPeerLost(const QString &userId);
 
     DatabaseManager *m_db;

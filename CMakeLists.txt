@@ -6,11 +6,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Qt6 REQUIRED COMPONENTS
-    Core Gui Network Qml Quick QuickControls2 Sql Bluetooth
+    Core Gui Network Qml Quick QuickControls2 Sql Bluetooth Multimedia
 )
 # Widgets is only needed for the desktop system-tray icon
 if(NOT ANDROID)
     find_package(Qt6 REQUIRED COMPONENTS Widgets)
+else()
+    find_package(Qt6 REQUIRED COMPONENTS CorePrivate)   # QtAndroidPrivate::startActivity (camera)
 endif()
 
 qt_standard_project_setup(REQUIRES 6.5)
@@ -39,6 +41,7 @@ qt_add_executable(appLetsChat
     src/models/PeerListModel.h        src/models/PeerListModel.cpp
     src/models/MessageModel.h         src/models/MessageModel.cpp
     src/platform/BackgroundService.h  src/platform/BackgroundService.cpp
+    src/platform/MediaService.h       src/platform/MediaService.cpp
     src/utils/DeviceInfo.h            src/utils/DeviceInfo.cpp
 )
 
@@ -58,11 +61,15 @@ qt_add_qml_module(appLetsChat
         qml/components/MessageBubble.qml
         qml/components/TransportBadge.qml
         qml/components/Toast.qml
+        qml/components/VoiceNote.qml
+        qml/dialogs/PhotoDialog.qml
+        qml/dialogs/VoiceDialog.qml
         qml/views/OnboardingView.qml
         qml/views/ContactsView.qml
         qml/views/ChatView.qml
         qml/views/SettingsView.qml
         qml/views/BluetoothView.qml
+        qml/views/ProfileView.qml
         qml/dialogs/AliasDialog.qml
 )
 
@@ -89,8 +96,11 @@ set_target_properties(appLetsChat PROPERTIES
 
 target_link_libraries(appLetsChat PRIVATE
     Qt6::Core Qt6::Gui Qt6::Network Qt6::Qml Qt6::Quick Qt6::QuickControls2
-    Qt6::Sql Qt6::Bluetooth
+    Qt6::Sql Qt6::Bluetooth Qt6::Multimedia
 )
+if(ANDROID)
+    target_link_libraries(appLetsChat PRIVATE Qt6::CorePrivate)   # QtAndroidPrivate::startActivity
+endif()
 if(NOT ANDROID)
     target_link_libraries(appLetsChat PRIVATE Qt6::Widgets)
 endif()

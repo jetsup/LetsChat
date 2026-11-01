@@ -22,28 +22,50 @@ Targets: Linux, Windows, macOS (desktop) and Android (Qt 6.12, tested on Android
 | Chat over Wi-Fi | Open LetsChat on two devices on the same network. They appear in the list within a few seconds; tap one to chat. |
 | Chat over Bluetooth | Tap the Bluetooth icon (top bar) → **Nearby devices**. Turn Bluetooth on if asked, scan, then **Connect**. The other device must run LetsChat. Once linked, the peer shows up in the chat list with a *Bluetooth* badge. |
 | Make this device visible | Nearby devices → **Make this device visible** (needed the first time two devices meet). |
+| Take a picture (Android) | Camera icon inside the message field (shown while the field is empty). The system camera opens; after confirming the shot a preview appears with an optional caption and Send / Cancel. |
+| Voice note | Microphone icon inside the message field (shown while empty): **press and hold** to record, release to stop. A confirmation dialog lets you listen, then **Send** or **Discard**. Voice notes (up to 5 min) appear as a play button + progress bar. First use asks for microphone permission. |
+| Send a photo or file | Tap the paperclip next to the message field → **Photo** or **File**, pick it in the file dialog (native picker on Android). Up to 25 MB. Images show inline (tap to view full screen); other files show as a card (desktop: click opens it with the default app). Received files are stored in the app data folder under `received/`. |
+| Profile picture | Settings → **Change photo** (or tap your avatar). The picture is cropped to a square, shrunk to 256 × 256 and shared automatically with everyone you chat with (they fetch it when they see you; they see a new one within seconds). **Remove photo** goes back to initials. |
+| Nickname for a contact | Tap a person's **picture** in the list (a dialog with a big picture or initials, a **Message** and an **Info** button), or the chat ⋮ menu → **Contact info** → *Nickname* → Save. Only you see it, and it is shown instead of the name the contact broadcasts (list, chat header, notifications). Clear the field to go back to their own name. |
+| Contact info | Shows picture, nickname and broadcast name, status, **connection mode** (Wi-Fi / Bluetooth / both), **IP address** (Wi-Fi), Bluetooth address, **connected since** (or *last seen*), **first connected**, device name and user ID. |
+| Search people | The *Search people* box at the top of the chat list (always shown) matches nickname, broadcast name, device name and IP address. |
+| Search in a chat | Chat ⋮ menu (top right) → **Search**. Matches are outlined; the counter shows *current/total*; ▲ / ▼ (or Enter) jump between them, ✕ closes. |
+| Delete a message | Long-press (touch) or right-click (desktop) a message → **Delete for me**, or **Delete for everyone** for your own messages. The deletion is sent to the contact by message id; if they are offline it is queued and sent when they are back. A contact can only delete messages that *they* sent. |
+| Delete a conversation | Chat ⋮ menu → **Delete chat…**, or the same button on the Contact info page. Removes all messages and files with them from this device only. |
+| Esc (desktop) | Closes the topmost thing: image viewer / dialog → page → the open chat (the right panel then asks you to select a conversation). |
 | Settings | Gear icon: name, theme (System/Light/Dark), background running, notifications, Bluetooth switch. |
-| Android Back button | Closes the open page/chat; from the chat list it moves the app to the background (the service keeps running). |
+| Android Back button | Steps back one screen: dialog → page (Settings/Bluetooth) → open chat → chat list. Only from the chat list it moves the app to the background (the service keeps running). The first press while the keyboard is open just hides the keyboard. |
 | Desktop close button | Hides the window to the tray (if a tray exists and *Keep running in background* is on). Use tray menu → **Quit** or Settings → **Quit LetsChat** to exit. |
 
-Message status: *Sending…* → delivered (just the time) or *Not delivered* (red). LAN messages are
-acknowledged by the receiver; if a LAN send fails and a Bluetooth link to the same peer exists, the message
-is re-sent over Bluetooth automatically.
+Message status: *Sending…* → delivered (just the time), *Waiting to send…* (queued) or *Not delivered* (red,
+only after 24 h or if an attached file vanished). LAN messages are acknowledged by the receiver. A message
+that cannot be delivered (peer offline, Wi-Fi gone, peer frozen by the phone's power manager) is **queued and
+retried automatically** – when the peer shows up again, when the app returns to the foreground and every 20 s.
+Retries reuse the message id, so a message that actually did arrive late is not duplicated: the receiver
+ignores the duplicate but still acknowledges it, which flips the sender's status to delivered. If a LAN send
+fails and a Bluetooth link to the same peer exists, the message is sent over Bluetooth instead.
 
 ### Android background limitations (important)
 
-The app does everything Android offers for staying alive: a foreground service
-(`foregroundServiceType=connectedDevice`) with a persistent notification, a Wi-Fi multicast lock, a partial
-wake lock, `android.app.background_running=true` so Qt keeps its event loop running, and a request to be
-exempt from battery optimisation (Settings → *Unrestricted battery use*).
+The app does what Android offers for staying alive *efficiently*: a foreground service
+(`connectedDevice|remoteMessaging`) with a low-priority persistent notification, a Wi-Fi multicast lock (so
+UDP broadcasts are received), `android.app.background_running=true` so Qt keeps its event loop running, and a
+request to be exempt from battery optimisation (Settings → *Unrestricted battery use*). In the background
+the app announces itself every 8 s instead of 3 s and polls the network every 10 s instead of 4 s; peers
+adapt their timeouts to the announced interval. No wake lock is held (it would keep the CPU awake all day).
 
 Some manufacturers add their **own** freezer on top. On the Infinix X6855 used for testing (XOS), the
 system log shows `Usf_Hiber … freeze uid: … com.smalnets.letschat` a few seconds after the app leaves the
 foreground, even with the service running and every standard battery exemption granted. While frozen the
 whole process (including plain native threads) is halted, so peers see the device as offline. If you
 see this, look for a vendor setting such as *Phone Master / Battery / App freeze / Auto-start / Lock app in
-recents* and allow LetsChat there. Stock Android and most other vendors do not do this. This was **not**
-resolved on the test device.
+recents* and allow LetsChat there (Settings → *App settings* opens the system page for the app). Stock
+Android and most other vendors do not do this. This was **not** resolved on the test device: neither
+`background_running`, the foreground-service types, battery exemption, nor an established TCP connection
+wakes the process (the vendor only unfreezes a hard-coded set of apps, e.g. WhatsApp via push). Consequently
+a message sent to a frozen phone is **queued on the sender and delivered within seconds of the phone waking
+up** (unlocking it, opening the app or a notification), not while it is frozen. Truly instant delivery to a
+frozen device would need a push channel, which an offline LAN/Bluetooth app does not have.
 
 ---
 
@@ -56,7 +78,8 @@ src/
                IdentityManager  persistent user id (UUID), alias, onboarding flag
                ThemeManager     system / light / dark
   chat/        ChatController   glue: transports <-> database <-> models <-> notifications
-  network/     DiscoveryService UDP presence broadcast + peer expiry
+  network/     FrameParser      line/file frame parser + FilePump (streams files into sockets)
+               DiscoveryService UDP presence broadcast + peer expiry
                TransferService  TCP server/client, framed JSON, acknowledgements
                BluetoothService RFCOMM server, device scan, links, hello + text frames
                PeerManager      merges LAN + Bluetooth knowledge into the peer list
@@ -66,17 +89,19 @@ src/
   models/      PeerListModel    peers with online state per transport, unread count, last message
                MessageModel     messages of the open conversation
   notifications/ NotificationManager  Android notification / desktop tray balloon
-  platform/    BackgroundService      Android foreground service / desktop tray + hide-on-close
+  platform/    BackgroundService      Android foreground service / desktop tray + hide-on-close, Back-key bridge
+               MediaService           voice-note recording (Qt Multimedia), camera capture via system camera (Android)
   utils/       DeviceInfo       device name, best local IPv4
 qml/
   Main.qml                 window, responsive shell (side-by-side ≥ 820 px, single column below)
   themes/Theme.qml         colour/metric singleton (follows ThemeManager)
-  views/                   Onboarding, Contacts (chat list), Chat, Settings, Bluetooth
+  views/                   Onboarding, Contacts (chat list), Chat, Settings, Bluetooth, Profile (contact info)
   components/              Icon, IconButton, Avatar, PeerItem, MessageBubble, TransportBadge, Toast
   dialogs/AliasDialog.qml
 android/
   AndroidManifest.xml      permissions, activity, foreground service, background_running flag
-  src/.../LetsChatService.java   foreground service, notifications, permission helpers
+  src/.../LetsChatService.java   foreground service, notifications, permission helpers, camera intent
+  src/.../MainActivity.java      QtActivity subclass that owns the Back key (asks QML how many steps it can go back)
   res/drawable-*/          launcher icon and notification icon
 ```
 
@@ -103,7 +128,7 @@ All frames are UTF-8 JSON objects terminated by `\n`.
 ### LAN discovery – UDP 45454 (broadcast)
 Sent every 3 s to every interface's broadcast address:
 ```json
-{"type":"discovery","v":1,"userId":"<uuid>","alias":"Alice","deviceName":"Pixel 8"}
+{"type":"discovery","v":1,"iv":3000,"userId":"<uuid>","alias":"Alice","deviceName":"Pixel 8","av":"<12-char hash of the profile picture>"}
 ```
 A peer is *lost* after 12 s without announcement. Changing network (`LanTracker`) clears LAN state and
 announces again immediately.
@@ -114,6 +139,25 @@ announces again immediately.
 ← {"type":"ack","id":"<uuid>"}
 ```
 The sender fails the message after 5 s without an ack. Duplicate ids are ignored by the receiver.
+
+### Profile pictures
+Discovery packets and the Bluetooth `hello` carry only `av`, a hash of the sender's 256 × 256 JPEG. A receiver that sees a hash
+different from the one it stored sends `{"type":"avatar_get","fromUserId"}` (TCP or the Bluetooth link) and gets back a normal file
+frame with `"kind":"avatar"` followed by the JPEG bytes. Pictures are stored as `avatars/<userId>.jpg`; an empty hash means the
+contact removed its picture.
+
+### Deleting messages
+`{"type":"delete","id":"del:<msgId>","target":"<msgId>","fromUserId"}` (acknowledged over TCP, a plain frame on Bluetooth). Requests
+that could not be delivered stay in the `pending_deletes` table and are retried like queued messages.
+
+### Files, photos and voice notes
+A file is a header frame followed by exactly `size` raw bytes (both on TCP and Bluetooth); the receiver streams them to disk
+(`FrameParser`) and, on TCP, confirms with the usual `ack` after the last byte:
+```
+→ {"type":"file","v":1,"id","fromUserId","alias","kind":"image|file|voice","name":"photo.jpg","size":123456,"timestamp","caption":"","duration":0}\n<123456 bytes>
+← {"type":"ack","id"}\n
+```
+Chat history stores such messages with type 1 (image) / 2 (file) / 3 (voice note) and JSON content `{name,size,path,caption,duration}` (`duration` in ms, only for voice notes).
 
 ### Bluetooth – RFCOMM service UUID `e3a1c5a4-7c6e-4b0a-9f55-1d2b7a0c9e31`
 After connecting both sides send `{"type":"hello","userId","alias","deviceName"}`; afterwards the same
@@ -129,7 +173,8 @@ remembered and re-connected automatically when they show up in a scan.
 * `messages` (id, from, to, content, type, timestamp, conversation_id, status) – `content` is stored as
   `enc1:` + base64(nonce ‖ ciphertext ‖ MAC) using `CryptoUtils`. The 32-byte key is generated per
   installation and kept in the app's private settings.
-* `peers` (user_id, alias, device_name, ip_address, bt_address, last_seen).
+* `peers` (user_id, alias, device_name, ip_address, bt_address, last_seen, first_seen, nickname, avatar_hash).
+* `pending_deletes` (message_id, peer_id) – "delete for everyone" requests still to be delivered.
 * Databases from version 0.1 are migrated in place; legacy plaintext rows are still readable.
 
 **Limits – please read:** LAN traffic is **not encrypted or authenticated**; anyone on the network can read
@@ -142,15 +187,23 @@ with pinned device certificates) and a vetted AEAD cipher.
 ## 5. Android specifics
 
 * **Permissions** (see manifest): network + multicast, `POST_NOTIFICATIONS` (13+), `FOREGROUND_SERVICE` +
-  `…_CONNECTED_DEVICE`, `WAKE_LOCK`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `BLUETOOTH_SCAN/CONNECT/ADVERTISE`
+  `…_CONNECTED_DEVICE`/`…_REMOTE_MESSAGING`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `BLUETOOTH_SCAN/CONNECT/ADVERTISE`
   (12+; legacy `BLUETOOTH*`/location for ≤ 11). The Bluetooth runtime permission is requested through
   `QBluetoothPermission` the first time it is needed; the notification permission when the service starts.
 * **Service**: `LetsChatService` (same process). Started by `BackgroundService::start()` when
-  *Keep running in background* is on. It owns the multicast lock and wake lock.
+  *Keep running in background* is on. It owns the Wi-Fi multicast lock.
 * **Background event loop**: Qt blocks its event loop when the activity is suspended unless the manifest has
   `android.app.background_running=true` (Qt's loader turns that into `QT_BLOCK_EVENT_LOOPS_WHEN_SUSPENDED=0`).
-  Because Android destroys the window surface in the background, `main.cpp` hides the Quick window while the
-  app is `Suspended/Hidden` so Qt does not draw into a dead surface.
+  (An earlier workaround that hid the window on `Suspended` was removed: after the process was thawed it left a black
+  window because stale state events arrive out of order.)
+* **Back key**: Qt's own back callback never reached QML on current Android, so Back used to leave the app from any
+  screen. `MainActivity` registers its own `OnBackInvokedCallback`, reads the number of back steps QML published
+  (`Background.backDepth`) and either asks QML to take one step or calls `moveTaskToBack`.
+* **Camera**: `MediaStore.ACTION_IMAGE_CAPTURE` with an output URI from `androidx.core` `FileProvider`
+  (`res/xml/file_paths.xml`, cache dir), so no CAMERA permission is needed. Result delivery uses
+  `QtAndroidPrivate::startActivity` (private Qt API, needs `Qt6::CorePrivate`).
+* **Voice notes**: `RECORD_AUDIO` runtime permission via `QMicrophonePermission`; recording and playback use Qt Multimedia
+  (FFmpeg backend), AAC in an `.m4a` container.
 * **Device name**: `Build.MODEL` (the usual hostname is just “localhost” on Android).
 * **Icons**: `android/res/drawable-*` (launcher + notification) and `resources/icons/app.png` (desktop/tray).
 
@@ -202,11 +255,17 @@ Useful log lines: `Discovery: listening…`, `Transfer: listening…`, `LAN: net
 | Network id | `getLocalIpAddress()` returned the first IPv4 (often mobile data on Android) | Prefers private LAN addresses, skips cellular/VPN/virtual interfaces |
 | Android | Foreground service, notifications and background execution were stubs | `LetsChatService`, JNI helpers, `background_running`, runtime permissions |
 | Android UI | Window already sits between the system bars; extra insets doubled the header | Insets removed |
-| Dead code | `sendFile` stub, unused `SettingsManager`, duplicated settings | Removed (file transfer is *not* implemented) |
+| Composer | Material text field drew its floating label across the border and clipped the text; no way to attach media | Custom growing message field (Enter sends on desktop, Shift+Enter newline), attach menu, photo/file transfer |
+| Delivery | A timeout was treated as final failure although the message often arrived later; status never recovered | Queue + automatic retry with idempotent ids (see §1), status *Waiting to send…* |
+| Back key | Back left the app from every screen | `MainActivity` back bridge (see §5) |
+| Build | `-Wdeprecated`: implicit `this` capture in `[=]` lambdas (TransferService) | Explicit `[=, this]`; a full `-Wall -Wextra` build is now warning-free for project sources |
+| Voice notes | Pause restarted the note; the play/pause icon never updated for notes whose file name has a space (URL strings differ by percent-encoding) | The player is keyed on the message id instead of the URL |
+| Chat list | Last-message previews could be skipped at start-up (the sorted view re-ordered while being iterated) | Iterate the source model |
+| Dead code | `sendFile` stub, unused `SettingsManager`, duplicated settings | Removed (file transfer was reimplemented properly, see §3) |
 
 ## 8. Known limitations / ideas
 
-* Text messages only – no file/media transfer yet.
+* Attachments are limited to 25 MB and have no progress bar. On Android, non-image files can be received but not opened from the chat yet (needs a FileProvider share/open intent); images can be viewed in the app.
 * LAN traffic unencrypted (see §4). Add TLS + device pairing.
 * Android background reliability depends on vendor battery management (see §1).
 * **Bluetooth was implemented and builds/starts on Android and desktop, but a two-device Bluetooth chat has not

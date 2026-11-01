@@ -45,12 +45,24 @@ void DiscoveryService::startDiscovery()
         return;
     }
     m_retryTimer->stop();
-    m_broadcastTimer->start(AppConfig::DISCOVERY_INTERVAL_MS);
+    m_broadcastTimer->start(m_intervalMs);
     m_expireTimer->start(AppConfig::DISCOVERY_INTERVAL_MS);
     m_isRunning = true;
     emit runningChanged();
     qInfo() << "Discovery: listening on UDP" << AppConfig::DISCOVERY_PORT;
     sendDiscoveryBroadcast();
+}
+
+void DiscoveryService::setBackground(bool background)
+{
+    const int interval = background ? AppConfig::DISCOVERY_INTERVAL_BG_MS : AppConfig::DISCOVERY_INTERVAL_MS;
+    if (interval == m_intervalMs)
+        return;
+    m_intervalMs = interval;
+    if (m_isRunning) {
+        m_broadcastTimer->start(m_intervalMs);
+        sendDiscoveryBroadcast();   // announce the new interval so peers adapt their timeout
+    }
 }
 
 void DiscoveryService::stopDiscovery()
@@ -68,8 +80,9 @@ void DiscoveryService::stopDiscovery()
 }
 
 void DiscoveryService::setLocalInfo(const QString &userId, const QString &alias,
-                                    const QString &deviceName)
+                                    const QString &deviceName, const QString &avatarHash)
 {
+    m_localAvatar = avatarHash;
     m_localUserId = userId;
     m_localAlias = alias;
     m_localDeviceName = deviceName;
@@ -95,9 +108,11 @@ void DiscoveryService::sendDiscoveryBroadcast()
     QJsonObject message;
     message["type"] = "discovery";
     message["v"] = AppConfig::PROTOCOL_VERSION;
+    message["iv"] = m_intervalMs;
     message["userId"] = m_localUserId;
     message["alias"] = m_localAlias;
     message["deviceName"] = m_localDeviceName;
+    message["av"] = m_localAvatar;
     const QByteArray data = QJsonDocument(message).toJson(QJsonDocument::Compact);
 
     bool sent = false;
@@ -146,14 +161,17 @@ void DiscoveryService::processDiscoveryMessage(const QJsonObject &msg, const QSt
         return;
     const QString alias = msg["alias"].toString();
     const QString device = msg["deviceName"].toString();
+    const QString avatar = msg["av"].toString();
 
     auto it = m_known.find(userId);
     const bool changed = it == m_known.end() || it->ip != senderIp || it->alias != alias
-                         || it->deviceName != device;
-    m_known[userId] = {senderIp, alias, device, m_clock.elapsed()};
+                         || it->deviceName != device || it->avatar != avatar;
+    // A peer in power-saving mode announces less often: allow 2.5 intervals before calling it lost.
+    const qint64 timeout = qMax<qint64>(AppConfig::PEER_TIMEOUT_MS, qint64(msg["iv"].toInt(3000) * 5 / 2));
+    m_known[userId] = {senderIp, alias, device, avatar, m_clock.elapsed(), timeout};
     if (changed) {
         qInfo() << "Discovery: peer" << alias << device << senderIp;
-        emit peerDiscovered(userId, alias, device, senderIp);
+        emit peerDiscovered(userId, alias, device, senderIp, avatar);
     }
 }
 
@@ -162,7 +180,7 @@ void DiscoveryService::expirePeers()
     const qint64 now = m_clock.elapsed();
     QStringList gone;
     for (auto it = m_known.cbegin(); it != m_known.cend(); ++it)
-        if (now - it->lastSeenMs > AppConfig::PEER_TIMEOUT_MS)
+        if (now - it->lastSeenMs > it->timeoutMs)
             gone << it.key();
     for (const QString &id : gone) {
         m_known.remove(id);

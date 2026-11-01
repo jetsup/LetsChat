@@ -2,7 +2,10 @@
 #define CHATCONTROLLER_H
 
 #include "models/MessageModel.h"
+#include <QJsonObject>
 #include <QObject>
+#include <QSet>
+#include <QTimer>
 #include <QUrl>
 
 class IdentityManager;
@@ -51,7 +54,17 @@ public:
     Q_INVOKABLE void closeChat();
     Q_INVOKABLE void sendMessage(const QString &text);
     /** Sends a photo or any other file (a file:// or content:// URL from the file dialog). */
-    Q_INVOKABLE void sendAttachment(const QUrl &url);
+    Q_INVOKABLE void sendAttachment(const QUrl &url, const QString &caption = QString());
+    /** Sends a recorded voice note (m4a) of the given length. */
+    Q_INVOKABLE void sendVoice(const QUrl &url, int durationMs);
+
+    /** Removes a message here; with forEveryone also from the peer's device (own messages only). */
+    Q_INVOKABLE void deleteMessage(const QString &messageId, bool forEveryone);
+    /** Deletes the whole conversation with a peer from this device. */
+    Q_INVOKABLE void deleteConversation(const QString &peerId);
+    /** Row numbers (in the open conversation) of messages matching `text`. */
+    Q_INVOKABLE QVariantList searchMessages(const QString &text) const;
+    Q_INVOKABLE void copyText(const QString &text);
 
 signals:
     void currentPeerChanged();
@@ -67,15 +80,28 @@ private:
         int type = 0;
         QString kind, path, name;
         qint64 size = 0;
+        QString caption;
+        int durationMs = 0;
         bool viaBluetooth = false;
     };
 
     void onIncoming(const QString &fromUserId, const QString &alias, const QString &messageId,
                     const QString &content, const QString &timestamp, const QString &viaIp);
+    enum class Route { Unreachable, Sent, InFlight };
+    Route dispatch(const QString &id, Outgoing out);
+    void finishDispatch(const QString &id, const QString &peerName, Route route);
+    void flushQueue(const QString &peerId);
+    void flushAll();
+    void flushDeletes(const QString &peerId);
+    void onDeleteReceived(const QString &fromUserId, const QString &messageId);
+    void removeFiles(const QStringList &paths);
+    void onAvatarReceived(const QString &peerId, const QString &tmpPath, const QString &hash);
+    void requestAvatar(const QString &peerId, const QString &ip);
+    void publishLocalAvatar();
     void onSendFinished(const QString &messageId, bool ok, const QString &error);
-    void onIncomingFile(const QString &fromUserId, const QString &alias, const QString &messageId,
-                        const QString &kind, const QString &fileName, qint64 size,
-                        const QString &savedPath, const QString &timestamp, const QString &viaIp);
+    void onIncomingFile(const QString &savedPath, const QJsonObject &header, const QString &viaIp);
+    void queueFile(const QString &path, const QString &name, qint64 size, const QString &kind,
+                   const QString &caption, int durationMs);
     void storeIncoming(const QString &fromUserId, const QString &alias, const QString &id, int type,
                        const QString &content, const QString &ts);
     void applyLocalIdentity();
@@ -96,7 +122,9 @@ private:
 
     MessageModel m_messages;
     QString m_currentPeerId;
-    QHash<QString, Outgoing> m_inflight;   // LAN sends awaiting an ack
+    QHash<QString, Outgoing> m_inflight;
+    QSet<QString> m_deleteInflight;       // "del:<id>" requests waiting for an ack   // LAN sends awaiting an ack
+    QTimer *m_retryTimer = nullptr;
     bool m_started = false;
 };
 

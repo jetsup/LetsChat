@@ -16,7 +16,10 @@ macOS and Android.
 - **Persistent history**: SQLite database, message bodies encrypted at rest; unread counters, last-message preview
 - **Responsive Material UI**: side-by-side layout on wide windows, single column on phones; light, dark or
   system theme
-- Unique device identity (UUID) with an editable display name
+- Unique device identity (UUID) with an editable display name and **profile picture** that contacts see
+- **Contact info** page (connection mode, IP, connected since, device) and private **nicknames** that override broadcast names
+- Delete messages (for me / for everyone), delete whole chats, search people and search inside a chat
+- Photos (camera on Android, captions), files and **voice notes**
 
 > Security note: LAN/Bluetooth traffic is not end-to-end encrypted. See [DOCUMENTATION.md](DOCUMENTATION.md#4-storage-and-security).
 

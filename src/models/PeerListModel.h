@@ -3,6 +3,7 @@
 
 #include <QAbstractListModel>
 #include <QString>
+#include <QVariantMap>
 
 struct Peer
 {
@@ -16,9 +17,15 @@ struct Peer
     QString lastMessage;
     QString lastActivity;   // ISO timestamp of the last message (or last seen)
     int unread = 0;
+    QString nickname;       // what *we* call them; wins over everything they broadcast
+    QString firstSeen;
+    QString lastSeen;
+    QString connectedSince; // runtime only: when they last became reachable
+    QString avatarHash;
 
     bool isOnline() const { return lanOnline || btOnline; }
-    QString displayName() const { return alias.isEmpty() ? deviceName : alias; }
+    QString broadcastName() const { return alias.isEmpty() ? deviceName : alias; }
+    QString displayName() const { return nickname.isEmpty() ? broadcastName() : nickname; }
     QString transport() const { return lanOnline ? "lan" : (btOnline ? "bluetooth" : ""); }
 };
 
@@ -42,7 +49,11 @@ public:
         LastMessageRole,
         LastActivityRole,
         UnreadRole,
-        SortKeyRole
+        SortKeyRole,
+        NicknameRole,
+        BroadcastNameRole,
+        AvatarUrlRole,
+        SearchTextRole
     };
 
     explicit PeerListModel(QObject *parent = nullptr);
@@ -60,7 +71,14 @@ public:
     void upsertBluetooth(const QString &userId, const QString &alias, const QString &deviceName,
                          const QString &btAddress);
     void loadKnown(const QString &userId, const QString &alias, const QString &deviceName,
-                   const QString &ip, const QString &bt, const QString &lastSeen);
+                   const QString &ip, const QString &bt, const QString &lastSeen,
+                   const QString &nickname = {}, const QString &firstSeen = {},
+                   const QString &avatarHash = {});
+    void setNickname(const QString &userId, const QString &nickname);
+    void setAvatarHash(const QString &userId, const QString &hash);
+    QVariantMap info(const QString &userId) const;
+    static void setAvatarDir(const QString &dir) { s_avatarDir = dir; }
+    static QString avatarPath(const QString &userId) { return s_avatarDir + "/" + userId + ".jpg"; }
     void setLanOffline(const QString &userId);
     void setBluetoothOffline(const QString &userId);
     void markAllLanOffline();
@@ -71,6 +89,7 @@ public:
 
 signals:
     void onlineCountChanged();
+    void peerChanged(const QString &userId);
 
 private:
     int indexOf(const QString &userId) const;
@@ -78,6 +97,7 @@ private:
     void touch(int row, const QList<int> &roles = {});
 
     QList<Peer> m_peers;
+    static inline QString s_avatarDir;
     int m_lastOnline = 0;
 };
 

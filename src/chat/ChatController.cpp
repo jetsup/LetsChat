@@ -3,6 +3,7 @@
 #include "core/IdentityManager.h"
 #include "network/BluetoothService.h"
 #include "network/FrameParser.h"
+#include "models/PeerListModel.h"
 #include "network/LanTracker.h"
 #include "network/PeerManager.h"
 #include "network/TransferService.h"
@@ -15,8 +16,11 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QClipboard>
 #include <QGuiApplication>
 #include <QImageReader>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QStandardPaths>
 #include <QUuid>
 
@@ -34,10 +38,7 @@ ChatController::ChatController(IdentityManager *identity, PeerManager *peers,
     connect(m_transfer, &TransferService::sendFinished, this, &ChatController::onSendFinished);
     connect(m_transfer, &TransferService::fileReceived, this, &ChatController::onIncomingFile);
     connect(m_bluetooth, &BluetoothService::fileReceived, this,
-            [this](const QString &from, const QString &alias, const QString &id, const QString &kind,
-                   const QString &name, qint64 size, const QString &path, const QString &ts) {
-        onIncomingFile(from, alias, id, kind, name, size, path, ts, {});
-    });
+            [this](const QString &path, const QJsonObject &header) { onIncomingFile(path, header, {}); });
     // Bluetooth file sends report completion asynchronously
     connect(m_bluetooth, &BluetoothService::sendFinished, this,
             [this](const QString &id, bool ok) { onSendFinished(id, ok, ok ? QString() : tr("Bluetooth transfer failed")); });
@@ -48,11 +49,22 @@ ChatController::ChatController(IdentityManager *identity, PeerManager *peers,
         onIncoming(from, alias, id, content, ts, {});
     });
     connect(m_bluetooth, &BluetoothService::peerUp, m_peers, &PeerManager::onBluetoothPeerUp);
+    connect(m_bluetooth, &BluetoothService::deleteReceived, this, &ChatController::onDeleteReceived);
+    connect(m_transfer, &TransferService::deleteReceived, this, &ChatController::onDeleteReceived);
+    connect(m_bluetooth, &BluetoothService::avatarReceived, this, &ChatController::onAvatarReceived);
+    connect(m_transfer, &TransferService::avatarReceived, this, &ChatController::onAvatarReceived);
+    connect(m_peers, &PeerManager::avatarNeeded, this, &ChatController::requestAvatar);
+    connect(m_identity, &IdentityManager::avatarChanged, this, &ChatController::publishLocalAvatar);
     connect(m_bluetooth, &BluetoothService::peerDown, m_peers, &PeerManager::onBluetoothPeerDown);
 
     // Keep the header of the open chat (online dot, transport) in sync with the peer list.
     connect(m_peers, &PeerManager::peerOnline, this, [this](const QString &id) {
         if (id == m_currentPeerId) emit currentPeerChanged();
+        flushQueue(id);   // deliver everything that piled up while the peer was away/frozen
+        flushDeletes(id);
+    });
+    connect(m_peers, &PeerManager::peerChanged, this, [this](const QString &id) {
+        if (id == m_currentPeerId) emit currentPeerChanged();   // nickname / picture / state changed
     });
     connect(m_peers, &PeerManager::peerOffline, this, [this](const QString &id) {
         if (id == m_currentPeerId) emit currentPeerChanged();
@@ -64,13 +76,28 @@ ChatController::ChatController(IdentityManager *identity, PeerManager *peers,
     });
     connect(m_lan, &LanTracker::networkChanged, this, &ChatController::networkChanged);
 
+    // Retry queued messages when the app comes back to the foreground and every 20 s otherwise.
+    m_retryTimer = new QTimer(this);
+    m_retryTimer->setInterval(20000);
+    connect(m_retryTimer, &QTimer::timeout, this, &ChatController::flushAll);
+    connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState st) {
+        if (st == Qt::ApplicationActive && m_started)
+            flushAll();
+        m_lan->setBackground(st != Qt::ApplicationActive);
+        m_peers->setBackground(st != Qt::ApplicationActive);
+    });
+
     connect(m_identity, &IdentityManager::aliasChanged, this, [this] { if (m_started) applyLocalIdentity(); });
 }
 
 void ChatController::applyLocalIdentity()
 {
-    m_peers->setLocalIdentity(m_identity->userId(), m_identity->alias(), m_identity->deviceName());
-    m_bluetooth->setLocalInfo(m_identity->userId(), m_identity->alias(), m_identity->deviceName());
+    m_peers->setLocalIdentity(m_identity->userId(), m_identity->alias(), m_identity->deviceName(),
+                              m_identity->avatarHash());
+    m_bluetooth->setLocalInfo(m_identity->userId(), m_identity->alias(), m_identity->deviceName(),
+                              m_identity->avatarHash(), m_identity->avatarPath());
+    m_transfer->setLocalUser(m_identity->userId());
+    m_transfer->setLocalAvatar(m_identity->avatarPath());
 }
 
 void ChatController::startServices()
@@ -80,14 +107,20 @@ void ChatController::startServices()
     m_started = true;
     applyLocalIdentity();
     m_peers->loadKnownPeers();
+    m_db->requeueStale(m_identity->userId());
+    m_retryTimer->start();
     // Show the last message in the list for people we chatted with before.
     // (done lazily per peer when first loaded; cheap enough for a LAN-sized list)
-    QAbstractItemModel *model = qobject_cast<QAbstractItemModel *>(m_peers->model());
-    for (int i = 0; model && i < model->rowCount(); ++i) {
-        const QString id = model->index(i, 0).data(PeerListModel::UserIdRole).toString();
+    // Iterate the *source* model: the sorted view re-orders itself every time a preview is set,
+    // which used to make this loop skip people.
+    PeerListModel *source = m_peers->peers();
+    QStringList ids;
+    for (int i = 0; i < source->rowCount(); ++i)
+        ids << source->index(i, 0).data(PeerListModel::UserIdRole).toString();
+    for (const QString &id : ids) {
         const QVariantMap last = m_db->lastMessage(DatabaseManager::conversationId(m_identity->userId(), id));
         if (!last.isEmpty())
-            m_peers->peers()->setLastMessage(
+            source->setLastMessage(
                 id, MessageModel::preview(last["messageType"].toInt(), last["content"].toString()),
                 last["timestamp"].toString());
     }
@@ -150,6 +183,47 @@ bool ChatController::sendViaBluetooth(const QString &peerId, const QString &id, 
     return m_bluetooth->sendText(peerId, id, m_identity->userId(), m_identity->alias(), text, ts);
 }
 
+bool ChatController::resendViaBluetooth(const Outgoing &o, const QString &id)
+{
+    if (o.type == 0)
+        return sendViaBluetooth(o.peerId, id, o.text, o.ts);
+    return m_bluetooth->sendFile(o.peerId, id, m_identity->userId(), m_identity->alias(), o.kind,
+                                 o.path, o.name, o.size, o.ts, o.caption, o.durationMs);
+}
+
+// Picks a transport for one outgoing message.  Wi-Fi is preferred; a peer that was seen on the LAN
+// before may still be reachable after its last announcement expired, so its stored address is tried.
+ChatController::Route ChatController::dispatch(const QString &id, Outgoing out)
+{
+    const Peer *peer = m_peers->peers()->find(out.peerId);
+    if (!peer)
+        return Route::Unreachable;
+    const QString me = m_identity->userId();
+
+    const bool tryLan = !peer->ipAddress.isEmpty() && m_lan->isConnected()
+                        && (peer->lanOnline || !peer->btOnline);
+    if (tryLan) {
+        m_inflight.insert(id, out);
+        if (out.type == 0)
+            m_transfer->sendText(peer->ipAddress, id, me, m_identity->alias(), out.text, out.ts);
+        else
+            m_transfer->sendFile(peer->ipAddress, id, me, m_identity->alias(), out.kind, out.path,
+                                 out.name, out.size, out.ts, out.caption, out.durationMs);
+        return Route::InFlight;
+    }
+    if (m_bluetooth->isLinked(out.peerId)) {
+        if (out.type == 0)
+            return sendViaBluetooth(out.peerId, id, out.text, out.ts) ? Route::Sent : Route::Unreachable;
+        out.viaBluetooth = true;
+        if (m_bluetooth->sendFile(out.peerId, id, me, m_identity->alias(), out.kind, out.path,
+                                  out.name, out.size, out.ts, out.caption, out.durationMs)) {
+            m_inflight.insert(id, out);
+            return Route::InFlight;
+        }
+    }
+    return Route::Unreachable;
+}
+
 void ChatController::sendMessage(const QString &rawText)
 {
     const QString text = rawText.trimmed();
@@ -159,79 +233,67 @@ void ChatController::sendMessage(const QString &rawText)
 
     const QString me = m_identity->userId();
     const QString peerId = peer->userId;
+    const QString name = peer->displayName();
     const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const QString ts = QDateTime::currentDateTime().toString(Qt::ISODate);
 
-    // Prefer Wi-Fi/LAN; fall back to Bluetooth.  A peer that was seen on the LAN before may
-    // be reachable even if its last announcement has expired, so try the stored address too.
-    const bool tryLan = !peer->ipAddress.isEmpty() && m_lan->isConnected()
-                        && (peer->lanOnline || !peer->btOnline);
-    int status = 0;
-    if (!tryLan) {
-        if (sendViaBluetooth(peerId, id, text, ts)) {
-            status = 1;
-        } else {
-            status = 2;
-            emit notice(tr("%1 is not reachable right now").arg(peer->displayName()));
-        }
-    }
-
-    m_messages.addMessage(id, me, peerId, text, 0, ts, status);
-    m_db->saveMessage(id, me, peerId, text, 0, ts, status);
+    m_messages.addMessage(id, me, peerId, text, 0, ts, 0);
+    m_db->saveMessage(id, me, peerId, text, 0, ts, 0);
     m_peers->peers()->setLastMessage(peerId, text, ts);
     emit messageAdded();
 
-    if (tryLan) {
-        Outgoing out;
-        out.peerId = peerId;
-        out.text = text;
-        out.ts = ts;
-        m_inflight.insert(id, out);
-        m_transfer->sendText(peer->ipAddress, id, me, m_identity->alias(), text, ts);
-    }
+    Outgoing out;
+    out.peerId = peerId;
+    out.text = text;
+    out.ts = ts;
+    finishDispatch(id, name, dispatch(id, out));
 }
 
-bool ChatController::resendViaBluetooth(const Outgoing &o, const QString &id)
+// Updates the stored status after dispatch(): InFlight is resolved later by onSendFinished().
+void ChatController::finishDispatch(const QString &id, const QString &peerName, Route route)
 {
-    if (o.type == 0)
-        return sendViaBluetooth(o.peerId, id, o.text, o.ts);
-    return m_bluetooth->sendFile(o.peerId, id, m_identity->userId(), m_identity->alias(), o.kind,
-                                 o.path, o.name, o.size, o.ts);
+    if (route == Route::InFlight)
+        return;
+    const int status = route == Route::Sent ? 1 : 3;
+    m_messages.setStatus(id, status);
+    m_db->updateMessageStatus(id, status);
+    if (status == 3)
+        emit notice(tr("%1 is offline – the message will be sent when they are back").arg(peerName));
 }
 
 void ChatController::onSendFinished(const QString &messageId, bool ok, const QString &error)
 {
+    if (messageId.startsWith("del:")) {              // result of a "delete for everyone" request
+        m_deleteInflight.remove(messageId);
+        if (ok)
+            m_db->removePendingDelete(messageId.mid(4));   // otherwise it stays queued
+        return;
+    }
     auto it = m_inflight.find(messageId);
     if (it == m_inflight.end())
         return;
     Outgoing out = it.value();
     m_inflight.erase(it);
-    int status = ok ? 1 : 2;
-    if (!ok && !out.viaBluetooth && resendViaBluetooth(out, messageId)) {
-        // LAN failed but a Bluetooth link was up. Text is written immediately; files report
-        // their completion through BluetoothService::sendFinished.
-        if (out.type != 0) {
-            out.viaBluetooth = true;
-            m_inflight.insert(messageId, out);
+
+    int status = ok ? 1 : 3;   // a failure is not final: the message stays queued and is retried
+    if (!ok && !out.viaBluetooth && m_bluetooth->isLinked(out.peerId)) {
+        out.viaBluetooth = true;
+        if (out.type == 0 && sendViaBluetooth(out.peerId, messageId, out.text, out.ts)) {
+            status = 1;
+        } else if (out.type != 0 && resendViaBluetooth(out, messageId)) {
+            m_inflight.insert(messageId, out);   // completion is reported by BluetoothService
             return;
         }
-        status = 1;
-    } else if (!ok) {
-        status = 2;
     }
-    if (status == 2) {
-        const Peer *p = m_peers->peers()->find(out.peerId);
-        emit notice(tr("Message to %1 was not delivered").arg(p ? p->displayName() : tr("peer")));
-        qWarning() << "Delivery failed:" << error;
-    }
+    if (!ok && status == 3)
+        qInfo() << "Delivery postponed:" << error;
     m_messages.setStatus(messageId, status);
     m_db->updateMessageStatus(messageId, status);
 }
 
-void ChatController::sendAttachment(const QUrl &url)
+void ChatController::sendAttachment(const QUrl &url, const QString &caption)
 {
-    const Peer *peer = m_peers->peers()->find(m_currentPeerId);
-    if (!peer || !url.isValid())
+    if (!m_peers->peers()->find(m_currentPeerId) || !url.isValid())
         return;
     const QString src = url.isLocalFile() ? url.toLocalFile() : url.toString();
 
@@ -252,7 +314,30 @@ void ChatController::sendAttachment(const QUrl &url)
     QImageReader reader(&in);
     const bool isImage = reader.canRead();
     in.close();
+    queueFile(src, name, size, isImage ? "image" : "file", isImage ? caption.trimmed() : QString(), 0);
+}
 
+void ChatController::sendVoice(const QUrl &url, int durationMs)
+{
+    if (!m_peers->peers()->find(m_currentPeerId) || !url.isLocalFile())
+        return;
+    const QString src = url.toLocalFile();
+    const qint64 size = QFileInfo(src).size();
+    if (size <= 0) {
+        emit notice(tr("The recording is empty"));
+        return;
+    }
+    queueFile(src, tr("Voice message") + ".m4a", size, "voice", {}, durationMs);
+    QFile::remove(src);   // queueFile() keeps its own copy
+}
+
+// Copies the file into the app's "sent" folder, shows it in the chat and hands it to a transport.
+void ChatController::queueFile(const QString &src, const QString &name, qint64 size, const QString &kind,
+                               const QString &caption, int durationMs)
+{
+    const Peer *peer = m_peers->peers()->find(m_currentPeerId);
+    if (!peer)
+        return;
     const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/sent";
     QDir().mkpath(dir);
@@ -261,35 +346,73 @@ void ChatController::sendAttachment(const QUrl &url)
         emit notice(tr("Could not read the selected file"));
         return;
     }
-    // Images picked from Android providers can lack an extension; give the copy one for previews.
-    const QString kind = isImage ? "image" : "file";
-    const int type = isImage ? 1 : 2;
-
+    const int type = kind == "image" ? 1 : kind == "voice" ? 3 : 2;
     const QString me = m_identity->userId();
     const QString ts = QDateTime::currentDateTime().toString(Qt::ISODate);
-    Outgoing out{peer->userId, {}, ts, type, kind, copy, name, size};
-    const bool tryLan = !peer->ipAddress.isEmpty() && m_lan->isConnected()
-                        && (peer->lanOnline || !peer->btOnline);
-    int status = 0;
-    if (!tryLan) {
-        if (resendViaBluetooth(out, id)) {
-            out.viaBluetooth = true;
-        } else {
-            status = 2;
-            emit notice(tr("%1 is not reachable right now").arg(peer->displayName()));
-        }
-    }
-    const QString content = MessageModel::attachmentJson(name, size, copy);
-    m_messages.addMessage(id, me, peer->userId, content, type, ts, status);
-    m_db->saveMessage(id, me, peer->userId, content, type, ts, status);
+    const QString content = MessageModel::attachmentJson(name, size, copy, caption, durationMs);
+    m_messages.addMessage(id, me, peer->userId, content, type, ts, 0);
+    m_db->saveMessage(id, me, peer->userId, content, type, ts, 0);
     m_peers->peers()->setLastMessage(peer->userId, MessageModel::preview(type, content), ts);
     emit messageAdded();
 
-    if (status == 0) {
-        m_inflight.insert(id, out);
-        if (tryLan)
-            m_transfer->sendFile(peer->ipAddress, id, me, m_identity->alias(), kind, copy, name, size, ts);
+    Outgoing out{peer->userId, {}, ts, type, kind, copy, name, size, caption, durationMs};
+    finishDispatch(id, peer->displayName(), dispatch(id, out));
+}
+
+// ------------------------------------------------------------------------------ retry queue
+
+void ChatController::flushQueue(const QString &peerId)
+{
+    const Peer *peer = m_peers->peers()->find(peerId);
+    if (!peer || !peer->isOnline())
+        return;
+    const QString me = m_identity->userId();
+    const QVariantList rows = m_db->pendingMessages(me, peerId);
+    for (const QVariant &v : rows) {
+        const QVariantMap r = v.toMap();
+        const QString id = r["id"].toString();
+        if (m_inflight.contains(id))
+            continue;
+        const int type = r["messageType"].toInt();
+        Outgoing out;
+        out.peerId = peerId;
+        out.ts = r["timestamp"].toString();
+        out.type = type;
+        if (type == 0) {
+            out.text = r["content"].toString();
+        } else {
+            const QJsonObject o = QJsonDocument::fromJson(r["content"].toString().toUtf8()).object();
+            out.kind = type == 1 ? "image" : type == 3 ? "voice" : "file";
+            out.path = o["path"].toString();
+            out.name = o["name"].toString();
+            out.size = qint64(o["size"].toDouble());
+            out.caption = o["caption"].toString();
+            out.durationMs = o["duration"].toInt();
+            if (!QFileInfo::exists(out.path)) {          // the stored copy is gone: give up
+                m_db->updateMessageStatus(id, 2);
+                m_messages.setStatus(id, 2);
+                continue;
+            }
+        }
+        m_messages.setStatus(id, 0);
+        const Route route = dispatch(id, out);
+        if (route == Route::Sent) {
+            m_messages.setStatus(id, 1);
+            m_db->updateMessageStatus(id, 1);
+        } else if (route == Route::Unreachable) {
+            m_messages.setStatus(id, 3);
+        }
     }
+}
+
+void ChatController::flushAll()
+{
+    const QStringList peers = m_db->peersWithPending(m_identity->userId());
+    for (const QString &id : peers)
+        flushQueue(id);
+    const QStringList deletes = m_db->peersWithPendingDeletes();
+    for (const QString &id : deletes)
+        flushDeletes(id);
 }
 
 // -------------------------------------------------------------------------------- receiving
@@ -310,11 +433,11 @@ void ChatController::onIncoming(const QString &fromUserId, const QString &alias,
     storeIncoming(fromUserId, alias, id, 0, content, ts);
 }
 
-void ChatController::onIncomingFile(const QString &fromUserId, const QString &alias,
-                                    const QString &messageId, const QString &kind,
-                                    const QString &fileName, qint64 size, const QString &savedPath,
-                                    const QString &timestamp, const QString &viaIp)
+void ChatController::onIncomingFile(const QString &savedPath, const QJsonObject &h, const QString &viaIp)
 {
+    const QString fromUserId = h["fromUserId"].toString();
+    const QString alias = h["alias"].toString();
+    const QString messageId = h["id"].toString();
     if (fromUserId.isEmpty() || fromUserId == m_identity->userId())
         return;
     if (!messageId.isEmpty() && m_db->messageExists(messageId))
@@ -322,10 +445,14 @@ void ChatController::onIncomingFile(const QString &fromUserId, const QString &al
     if (!viaIp.isEmpty())
         m_peers->onLanPeerSeen(fromUserId, alias, viaIp);
     const QString id = messageId.isEmpty() ? QUuid::createUuid().toString(QUuid::WithoutBraces) : messageId;
+    const QString timestamp = h["timestamp"].toString();
     const QString ts = QDateTime::fromString(timestamp, Qt::ISODate).isValid()
                            ? timestamp : QDateTime::currentDateTime().toString(Qt::ISODate);
-    storeIncoming(fromUserId, alias, id, kind == "image" ? 1 : 2,
-                  MessageModel::attachmentJson(fileName, size, savedPath), ts);
+    const QString kind = h["kind"].toString();
+    storeIncoming(fromUserId, alias, id, kind == "image" ? 1 : kind == "voice" ? 3 : 2,
+                  MessageModel::attachmentJson(h["name"].toString(), qint64(h["size"].toDouble()),
+                                               savedPath, h["caption"].toString(), h["duration"].toInt()),
+                  ts);
 }
 
 void ChatController::storeIncoming(const QString &fromUserId, const QString &alias, const QString &id,
@@ -348,4 +475,120 @@ void ChatController::storeIncoming(const QString &fromUserId, const QString &ali
         const Peer *p = m_peers->peers()->find(fromUserId);
         m_notifier->showMessageNotification(p ? p->displayName() : alias, text, fromUserId);
     }
+}
+
+// ------------------------------------------------------------------------- delete / search
+
+void ChatController::removeFiles(const QStringList &paths)
+{
+    for (const QString &p : paths)
+        if (!p.isEmpty())
+            QFile::remove(p);
+}
+
+void ChatController::deleteMessage(const QString &messageId, bool forEveryone)
+{
+    const QVariantMap info = m_db->messageInfo(messageId);
+    if (info.isEmpty())
+        return;
+    const QString me = m_identity->userId();
+    const bool mine = info["from"].toString() == me;
+    const QString peerId = mine ? info["to"].toString() : info["from"].toString();
+
+    if (info["type"].toInt() > 0)
+        removeFiles({QJsonDocument::fromJson(info["content"].toString().toUtf8()).object()["path"].toString()});
+    m_db->deleteMessage(messageId);
+    m_messages.removeMessage(messageId);
+    m_inflight.remove(messageId);
+
+    // keep the chat-list preview in sync
+    const QVariantMap last = m_db->lastMessage(DatabaseManager::conversationId(me, peerId));
+    m_peers->peers()->setLastMessage(peerId,
+        last.isEmpty() ? QString() : MessageModel::preview(last["messageType"].toInt(), last["content"].toString()),
+        last.isEmpty() ? QString() : last["timestamp"].toString());
+
+    if (forEveryone && mine) {
+        m_db->addPendingDelete(messageId, peerId);   // survives restarts; retried until acknowledged
+        flushDeletes(peerId);
+    }
+}
+
+void ChatController::flushDeletes(const QString &peerId)
+{
+    const Peer *peer = m_peers->peers()->find(peerId);
+    if (!peer || !peer->isOnline())
+        return;
+    const QString me = m_identity->userId();
+    for (const QString &target : m_db->pendingDeletes(peerId)) {
+        const QString key = "del:" + target;
+        if (m_deleteInflight.contains(key))
+            continue;
+        const bool tryLan = !peer->ipAddress.isEmpty() && m_lan->isConnected()
+                            && (peer->lanOnline || !peer->btOnline);
+        if (tryLan) {
+            m_deleteInflight.insert(key);
+            m_transfer->sendDelete(peer->ipAddress, target, me);
+        } else if (m_bluetooth->sendDelete(peerId, target, me)) {
+            m_db->removePendingDelete(target);
+        }
+    }
+}
+
+void ChatController::onDeleteReceived(const QString &fromUserId, const QString &messageId)
+{
+    const QVariantMap info = m_db->messageInfo(messageId);
+    // a peer may only delete messages that it sent itself
+    if (info.isEmpty() || info["from"].toString() != fromUserId)
+        return;
+    deleteMessage(messageId, false);
+}
+
+void ChatController::deleteConversation(const QString &peerId)
+{
+    const QString me = m_identity->userId();
+    removeFiles(m_db->deleteConversation(DatabaseManager::conversationId(me, peerId)));
+    if (peerId == m_currentPeerId)
+        m_messages.clear();
+    m_peers->peers()->setLastMessage(peerId, {}, {});
+    m_peers->peers()->clearUnread(peerId);
+}
+
+QVariantList ChatController::searchMessages(const QString &text) const
+{
+    return m_messages.search(text);
+}
+
+void ChatController::copyText(const QString &text)
+{
+    QGuiApplication::clipboard()->setText(text);
+}
+
+// ------------------------------------------------------------------------- profile pictures
+
+void ChatController::requestAvatar(const QString &peerId, const QString &ip)
+{
+    if (!ip.isEmpty())
+        m_transfer->requestAvatar(ip, peerId);
+    else
+        m_bluetooth->requestAvatar(peerId);
+}
+
+void ChatController::onAvatarReceived(const QString &peerId, const QString &tmpPath, const QString &hash)
+{
+    if (!m_peers->peers()->contains(peerId))
+        return;
+    const QString dest = PeerListModel::avatarPath(peerId);
+    QDir().mkpath(QFileInfo(dest).absolutePath());
+    QFile::remove(dest);
+    if (!QFile::rename(tmpPath, dest))
+        QFile::copy(tmpPath, dest);
+    QFile::remove(tmpPath);
+    m_peers->setAvatar(peerId, hash);
+}
+
+// Our own picture changed: re-announce it (the hash travels in every discovery packet / BT hello).
+void ChatController::publishLocalAvatar()
+{
+    if (m_started)
+        applyLocalIdentity();
 }

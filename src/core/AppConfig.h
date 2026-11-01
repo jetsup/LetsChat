@@ -20,9 +20,11 @@ public:
     static constexpr quint16 DISCOVERY_PORT = 45454;   // UDP broadcast
     static constexpr quint16 TRANSFER_PORT = 45455;    // TCP messages
     static constexpr int DISCOVERY_INTERVAL_MS = 3000;
+    static constexpr int DISCOVERY_INTERVAL_BG_MS = 8000;   // while the UI is in the background
     static constexpr int PEER_TIMEOUT_MS = 12000;      // peer is "offline" after this much silence
     static constexpr int SEND_TIMEOUT_MS = 5000;
     static constexpr int MAX_FRAME_BYTES = 1024 * 1024;
+    static constexpr int AVATAR_SIZE = 256;               // profile pictures are stored as 256x256 JPEGs
     static constexpr qint64 MAX_FILE_BYTES = 25LL * 1024 * 1024;   // photos / documents
 
     // Wire protocol version (bump when messages change incompatibly)

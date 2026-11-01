@@ -1,4 +1,7 @@
 #include "PeerListModel.h"
+#include <QDateTime>
+#include <QFileInfo>
+#include <QUrl>
 
 PeerListModel::PeerListModel(QObject *parent) : QAbstractListModel(parent) {}
 
@@ -27,6 +30,14 @@ QVariant PeerListModel::data(const QModelIndex &index, int role) const
     case LastActivityRole: return p.lastActivity;
     case UnreadRole: return p.unread;
     // online peers first, then most recent activity, then name
+    case NicknameRole: return p.nickname;
+    case BroadcastNameRole: return p.broadcastName();
+    case AvatarUrlRole:
+        return (p.avatarHash.isEmpty() || !QFileInfo::exists(avatarPath(p.userId)))
+                   ? QString()
+                   : QUrl::fromLocalFile(avatarPath(p.userId)).toString() + "?v=" + p.avatarHash;
+    case SearchTextRole:
+        return (p.nickname + " " + p.alias + " " + p.deviceName + " " + p.ipAddress).toLower();
     case SortKeyRole:
         return QString(p.isOnline() ? "1" : "0") + p.lastActivity.rightJustified(25, '0')
                + p.displayName().toLower();
@@ -44,6 +55,8 @@ QHash<int, QByteArray> PeerListModel::roleNames() const
         {LanOnlineRole, "lanOnline"}, {BtOnlineRole, "btOnline"},
         {LastMessageRole, "lastMessage"}, {LastActivityRole, "lastActivity"},
         {UnreadRole, "unread"},       {SortKeyRole, "sortKey"},
+        {NicknameRole, "nickname"},   {BroadcastNameRole, "broadcastName"},
+        {AvatarUrlRole, "avatarUrl"}, {SearchTextRole, "searchText"},
     };
 }
 
@@ -87,6 +100,7 @@ Peer &PeerListModel::ensure(const QString &userId, bool *created)
 void PeerListModel::touch(int row, const QList<int> &roles)
 {
     emit dataChanged(index(row), index(row), roles);
+    emit peerChanged(m_peers.at(row).userId);
     const int online = onlineCount();
     if (online != m_lastOnline) {
         m_lastOnline = online;
@@ -101,6 +115,8 @@ void PeerListModel::upsertLan(const QString &userId, const QString &alias, const
     p.alias = alias;
     p.deviceName = deviceName;
     p.ipAddress = ip;
+    if (!p.isOnline())
+        p.connectedSince = QDateTime::currentDateTime().toString(Qt::ISODate);
     p.lanOnline = true;
     touch(indexOf(userId));
 }
@@ -112,14 +128,23 @@ void PeerListModel::upsertBluetooth(const QString &userId, const QString &alias,
     p.alias = alias;
     if (!deviceName.isEmpty()) p.deviceName = deviceName;
     p.btAddress = btAddress;
+    if (!p.isOnline())
+        p.connectedSince = QDateTime::currentDateTime().toString(Qt::ISODate);
     p.btOnline = true;
     touch(indexOf(userId));
 }
 
 void PeerListModel::loadKnown(const QString &userId, const QString &alias, const QString &deviceName,
-                              const QString &ip, const QString &bt, const QString &lastSeen)
+                              const QString &ip, const QString &bt, const QString &lastSeen,
+                              const QString &nickname, const QString &firstSeen,
+                              const QString &avatarHash)
 {
     Peer &p = ensure(userId);
+    if (!nickname.isEmpty()) p.nickname = nickname;
+    if (!firstSeen.isEmpty()) p.firstSeen = firstSeen;
+    else if (p.firstSeen.isEmpty()) p.firstSeen = lastSeen;   // peers saved before first_seen existed
+    if (!avatarHash.isEmpty()) p.avatarHash = avatarHash;
+    if (!lastSeen.isEmpty()) p.lastSeen = lastSeen;
     p.alias = alias;
     p.deviceName = deviceName;
     p.ipAddress = ip;
@@ -134,6 +159,8 @@ void PeerListModel::setLanOffline(const QString &userId)
     const int i = indexOf(userId);
     if (i >= 0 && m_peers[i].lanOnline) {
         m_peers[i].lanOnline = false;
+        if (!m_peers[i].isOnline())
+            m_peers[i].lastSeen = QDateTime::currentDateTime().toString(Qt::ISODate);
         touch(i);
     }
 }
@@ -143,6 +170,8 @@ void PeerListModel::setBluetoothOffline(const QString &userId)
     const int i = indexOf(userId);
     if (i >= 0 && m_peers[i].btOnline) {
         m_peers[i].btOnline = false;
+        if (!m_peers[i].isOnline())
+            m_peers[i].lastSeen = QDateTime::currentDateTime().toString(Qt::ISODate);
         touch(i);
     }
 }
@@ -181,4 +210,47 @@ void PeerListModel::clearUnread(const QString &userId)
         m_peers[i].unread = 0;
         touch(i);
     }
+}
+
+void PeerListModel::setNickname(const QString &userId, const QString &nickname)
+{
+    const int i = indexOf(userId);
+    if (i < 0) return;
+    m_peers[i].nickname = nickname.trimmed();
+    touch(i);
+}
+
+void PeerListModel::setAvatarHash(const QString &userId, const QString &hash)
+{
+    const int i = indexOf(userId);
+    if (i < 0) return;
+    m_peers[i].avatarHash = hash;
+    touch(i);
+}
+
+QVariantMap PeerListModel::info(const QString &userId) const
+{
+    QVariantMap m;
+    const Peer *p = find(userId);
+    if (!p)
+        return m;
+    m["userId"] = p->userId;
+    m["displayName"] = p->displayName();
+    m["nickname"] = p->nickname;
+    m["broadcastName"] = p->broadcastName();
+    m["alias"] = p->alias;
+    m["deviceName"] = p->deviceName;
+    m["ipAddress"] = p->ipAddress;
+    m["btAddress"] = p->btAddress;
+    m["isOnline"] = p->isOnline();
+    m["lanOnline"] = p->lanOnline;
+    m["btOnline"] = p->btOnline;
+    m["transport"] = p->transport();
+    m["connectedSince"] = p->connectedSince;
+    m["firstSeen"] = p->firstSeen;
+    m["lastSeen"] = p->lastSeen;
+    m["avatarUrl"] = (p->avatarHash.isEmpty() || !QFileInfo::exists(avatarPath(p->userId)))
+                         ? QString()
+                         : QUrl::fromLocalFile(avatarPath(p->userId)).toString() + "?v=" + p->avatarHash;
+    return m;
 }

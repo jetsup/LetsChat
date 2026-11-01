@@ -3,6 +3,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import LetsChat
 
+// One row of the chat list.  Tapping the picture raises avatarClicked() (quick-view dialog),
+// tapping anywhere else opens the chat.
 ItemDelegate {
     id: root
 
@@ -11,9 +13,12 @@ ItemDelegate {
     required property string lastMessage
     required property string lastActivity
     required property string transport
+    required property string avatarUrl
     required property bool isOnline
     required property int unread
     property bool selected: false
+
+    signal avatarClicked()
 
     implicitHeight: 72
     padding: 0
@@ -33,9 +38,16 @@ ItemDelegate {
             Layout.alignment: Qt.AlignVCenter
             name: root.displayName
             seed: root.userId
+            source: root.avatarUrl
             size: 48
             showPresence: true
             online: root.isOnline
+
+            // tapping the picture opens the quick-view dialog instead of the chat
+            MouseArea {
+                anchors.fill: parent
+                onClicked: root.avatarClicked()
+            }
         }
 
         ColumnLayout {

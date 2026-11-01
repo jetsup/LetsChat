@@ -30,6 +30,12 @@ QVariant MessageModel::data(const QModelIndex &index, int role) const
     case AttachmentPathRole: return m.attachmentPath;
     case AttachmentUrlRole:
         return m.attachmentPath.isEmpty() ? QString() : QUrl::fromLocalFile(m.attachmentPath).toString();
+    case CaptionRole: return m.caption;
+    case DurationRole: return m.durationMs;
+    case DurationTextRole: {
+        const int sec = (m.durationMs + 500) / 1000;
+        return QStringLiteral("%1:%2").arg(sec / 60).arg(sec % 60, 2, 10, QLatin1Char('0'));
+    }
     case AttachmentSizeRole:
         return m.messageType > 0 ? QLocale().formattedDataSize(m.attachmentSize, 1) : QString();
     case DayStringRole: {
@@ -53,6 +59,7 @@ QHash<int, QByteArray> MessageModel::roleNames() const
         {DayStringRole, "dayString"},   {StatusRole, "status"},
         {AttachmentNameRole, "attachmentName"}, {AttachmentPathRole, "attachmentPath"},
         {AttachmentUrlRole, "attachmentUrl"},   {AttachmentSizeRole, "attachmentSize"},
+        {CaptionRole, "caption"}, {DurationRole, "duration"}, {DurationTextRole, "durationText"},
     };
 }
 
@@ -76,6 +83,8 @@ Message MessageModel::make(const QString &id, const QString &from, const QString
         m.attachmentName = o["name"].toString();
         m.attachmentPath = o["path"].toString();
         m.attachmentSize = qint64(o["size"].toDouble());
+        m.caption = o["caption"].toString();
+        m.durationMs = o["duration"].toInt();
     }
     return m;
 }
@@ -124,10 +133,13 @@ void MessageModel::clear()
     emit countChanged();
 }
 
-QString MessageModel::attachmentJson(const QString &name, qint64 size, const QString &path)
+QString MessageModel::attachmentJson(const QString &name, qint64 size, const QString &path,
+                                     const QString &caption, int durationMs)
 {
     return QString::fromUtf8(QJsonDocument(QJsonObject{{"name", name}, {"size", double(size)},
-                                                       {"path", path}}).toJson(QJsonDocument::Compact));
+                                                       {"path", path}, {"caption", caption},
+                                                       {"duration", durationMs}})
+                                 .toJson(QJsonDocument::Compact));
 }
 
 QString MessageModel::preview(int messageType, const QString &content)
@@ -136,5 +148,39 @@ QString MessageModel::preview(int messageType, const QString &content)
         return content;
     const QJsonObject o = QJsonDocument::fromJson(content.toUtf8()).object();
     const QString name = o["name"].toString();
-    return messageType == 1 ? tr("Photo") : (name.isEmpty() ? tr("File") : name);
+    if (messageType == 1) {
+        const QString caption = o["caption"].toString();
+        return caption.isEmpty() ? tr("Photo") : tr("Photo: %1").arg(caption);
+    }
+    if (messageType == 3)
+        return tr("Voice message");
+    return name.isEmpty() ? tr("File") : name;
+}
+
+void MessageModel::removeMessage(const QString &messageId)
+{
+    for (int i = 0; i < m_messages.size(); ++i) {
+        if (m_messages[i].messageId == messageId) {
+            beginRemoveRows({}, i, i);
+            m_messages.removeAt(i);
+            endRemoveRows();
+            emit countChanged();
+            return;
+        }
+    }
+}
+
+QVariantList MessageModel::search(const QString &query) const
+{
+    QVariantList rows;
+    const QString q = query.trimmed();
+    if (q.isEmpty())
+        return rows;
+    for (int i = 0; i < m_messages.size(); ++i) {
+        const Message &m = m_messages.at(i);
+        const QString haystack = m.messageType == 0 ? m.content : (m.caption + " " + m.attachmentName);
+        if (haystack.contains(q, Qt::CaseInsensitive))
+            rows.append(i);
+    }
+    return rows;
 }

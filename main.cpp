@@ -6,7 +6,6 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QStandardPaths>
-#include <QQuickWindow>
 #include <memory>
 
 #ifndef Q_OS_ANDROID
@@ -22,7 +21,9 @@
 #include "network/PeerManager.h"
 #include "network/TransferService.h"
 #include "notifications/NotificationManager.h"
+#include "models/PeerListModel.h"
 #include "platform/BackgroundService.h"
+#include "platform/MediaService.h"
 #include "storage/DatabaseManager.h"
 #include "utils/DeviceInfo.h"
 
@@ -57,8 +58,10 @@ int main(int argc, char *argv[])
     TransferService transfer(receiveDir);
     BluetoothService bluetooth(receiveDir);
     BackgroundService background;
+    MediaService media(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/voice");
     NotificationManager notifier;
     notifier.setBackgroundService(&background);
+    PeerListModel::setAvatarDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/avatars");
     PeerManager peers(&database);
     ChatController chat(&identity, &peers, &transfer, &bluetooth, &database, &notifier, &lanTracker,
                         &background);
@@ -78,6 +81,7 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("LetsChat", 1, 0, "Bluetooth", &bluetooth);
     qmlRegisterSingletonInstance("LetsChat", 1, 0, "Background", &background);
     qmlRegisterSingletonInstance("LetsChat", 1, 0, "Notifier", &notifier);
+    qmlRegisterSingletonInstance("LetsChat", 1, 0, "Media", &media);
 
     QQmlApplicationEngine engine;
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
@@ -85,19 +89,9 @@ int main(int argc, char *argv[])
     engine.loadFromModule("LetsChat", "Main");
 
 #ifdef Q_OS_ANDROID
-    // With android.app.background_running=true (AndroidManifest.xml) Qt keeps its event loop alive
-    // while the activity is in the background - needed for LAN discovery, the TCP server and
-    // Bluetooth.  Android destroys the window surface then, and Qt must not draw into it, so the
-    // window is hidden whenever the app is not active.
+    // android.app.background_running=true (AndroidManifest.xml) keeps Qt's event loop alive while the
+    // activity is in the background, which discovery, the TCP server and Bluetooth need.
     app.setQuitOnLastWindowClosed(false);
-    QObject::connect(&app, &QGuiApplication::applicationStateChanged, &app,
-                     [](Qt::ApplicationState state) {
-        const auto windows = QGuiApplication::allWindows();
-        for (QWindow *w : windows) {
-            if (qobject_cast<QQuickWindow *>(w))
-                w->setVisible(state != Qt::ApplicationSuspended && state != Qt::ApplicationHidden);
-        }
-    });
 #endif
 
     return app.exec();

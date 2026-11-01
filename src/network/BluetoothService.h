@@ -6,6 +6,7 @@
 #include <QBluetoothServer>
 #include <QBluetoothSocket>
 #include <QHash>
+#include <QJsonObject>
 #include <QObject>
 #include <QSet>
 #include <QVariantList>
@@ -43,7 +44,8 @@ public:
     QString statusText() const { return m_status; }
     QVariantList devices() const;
 
-    void setLocalInfo(const QString &userId, const QString &alias, const QString &deviceName);
+    void setLocalInfo(const QString &userId, const QString &alias, const QString &deviceName,
+                      const QString &avatarHash = {}, const QString &avatarPath = {});
     /** Starts listening for incoming connections (if the user enabled Bluetooth). */
     void start();
     void stop();
@@ -62,20 +64,24 @@ public:
                   const QString &alias, const QString &content, const QString &timestamp);
 
     /** Streams a file over the link; completion is reported through sendFinished(). */
+    /** Asks the peer for its profile picture / tells it to delete one of our messages. */
+    void requestAvatar(const QString &userId);
+    bool sendDelete(const QString &userId, const QString &targetMessageId, const QString &fromUserId);
     bool sendFile(const QString &userId, const QString &messageId, const QString &fromUserId,
                   const QString &alias, const QString &kind, const QString &filePath,
-                  const QString &fileName, qint64 size, const QString &timestamp);
+                  const QString &fileName, qint64 size, const QString &timestamp,
+                  const QString &caption = {}, int durationMs = 0);
 
 signals:
     void sendFinished(const QString &messageId, bool ok);
-    void fileReceived(const QString &fromUserId, const QString &alias, const QString &messageId,
-                      const QString &kind, const QString &fileName, qint64 size,
-                      const QString &savedPath, const QString &timestamp);
+    void fileReceived(const QString &savedPath, const QJsonObject &header);
     void stateChanged();
     void scanningChanged();
     void devicesChanged();
     void peerUp(const QString &userId, const QString &alias, const QString &deviceName,
-                const QString &address);
+                const QString &address, const QString &avatarHash);
+    void deleteReceived(const QString &fromUserId, const QString &targetMessageId);
+    void avatarReceived(const QString &peerUserId, const QString &path, const QString &hash);
     void peerDown(const QString &userId);
     void textReceived(const QString &fromUserId, const QString &alias, const QString &messageId,
                       const QString &content, const QString &timestamp);
@@ -104,7 +110,7 @@ private:
     bool m_enabled = true;
     bool m_scanning = false;
     QString m_status;
-    QString m_localUserId, m_localAlias, m_localDeviceName;
+    QString m_localUserId, m_localAlias, m_localDeviceName, m_localAvatarHash, m_localAvatarPath;
 
     QBluetoothLocalDevice *m_local = nullptr;
     QBluetoothServer *m_server = nullptr;

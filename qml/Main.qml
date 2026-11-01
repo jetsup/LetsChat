@@ -22,16 +22,61 @@ ApplicationWindow {
 
     // Wide windows show the list and the chat side by side, narrow ones one at a time.
     readonly property bool wide: width >= 820
-    // "", "settings" or "bluetooth"
+    // "", "settings", "bluetooth" or "profile" (of profileUserId)
     property string overlay: ""
+    property string profileUserId: ""
+    onOverlayChanged: Qt.inputMethod.hide()
+    function showProfile(id) { profileUserId = id; overlay = "profile" }
 
     // The Android window already sits between the system bars, so no extra insets are needed.
     readonly property real safeTop: 0
     readonly property real safeBottom: 0
 
-    Loader {
+    // Back (Android) always steps back one screen: page -> chat list, chat -> list, list -> background.
+    property Item shell: null            // set by the main screen so Back can close its dialogs
+    readonly property int backDepth: (shell && shell.dialogOpen ? 1 : 0)
+                                     + (overlay !== "" ? 1 : 0)
+                                     + (!wide && Chat.hasCurrentPeer ? 1 : 0)
+    Binding { target: Background; property: "backDepth"; value: window.backDepth; when: Device.isAndroid }
+    Connections {
+        target: Background
+        function onBackRequested() { window.handleBack() }
+    }
+
+    function handleBack() {
+        if (shell && shell.dialogOpen) {
+            shell.closeDialogs()
+        } else if (overlay !== "") {
+            overlay = ""
+        } else if (!wide && Chat.hasCurrentPeer) {
+            Chat.closeChat()
+        } else if (Device.isAndroid && Background.shouldHideOnClose()) {
+            Background.moveToBackground()
+        } else if (Device.isAndroid) {
+            Qt.quit()
+        }
+    }
+
+    Item {
         anchors.fill: parent
-        sourceComponent: Identity.onboarded ? shell : onboarding
+        focus: true
+        // On Android MainActivity owns the Back key (see MainActivity.java); swallow Qt's copy of it
+        Keys.onBackPressed: (event) => { if (!Device.isAndroid) window.handleBack(); event.accepted = true }
+        // Esc (desktop): close the top-most thing; with nothing open it leaves the chat, which shows the
+        // "select a conversation" panel again.  Popups handle their own Esc first.
+        Keys.onEscapePressed: (event) => {
+            if (!Device.isAndroid) {
+                if (shell && shell.dialogOpen) shell.closeDialogs()
+                else if (overlay !== "") overlay = ""
+                else if (Chat.hasCurrentPeer) Chat.closeChat()
+            }
+            event.accepted = true
+        }
+
+        Loader {
+            anchors.fill: parent
+            sourceComponent: Identity.onboarded ? shell : onboarding
+        }
     }
 
     Component {
@@ -42,6 +87,12 @@ ApplicationWindow {
     Component {
         id: shell
         Item {
+            id: shellRoot
+            property bool dialogOpen: chatView.dialogOpen
+            function closeDialogs() { chatView.closeDialogs() }
+            Component.onCompleted: window.shell = shellRoot
+            Component.onDestruction: if (window.shell === shellRoot) window.shell = null
+
             ContactsView {
                 id: contacts
                 topInset: window.safeTop
@@ -54,6 +105,7 @@ ApplicationWindow {
                 onPeerChosen: (id) => Chat.selectPeer(id)
                 onOpenSettings: window.overlay = "settings"
                 onOpenBluetooth: window.overlay = "bluetooth"
+                onProfileRequested: (id) => window.showProfile(id)
             }
 
             Rectangle {
@@ -66,6 +118,7 @@ ApplicationWindow {
             }
 
             ChatView {
+                id: chatView
                 visible: window.wide || Chat.hasCurrentPeer
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
@@ -76,13 +129,15 @@ ApplicationWindow {
                 topInset: window.safeTop
                 bottomInset: window.safeBottom
                 onBackRequested: Chat.closeChat()
+                onProfileRequested: window.showProfile(Chat.currentPeerId)
             }
 
             Loader {
                 anchors.fill: parent
                 z: 10
                 active: window.overlay !== ""
-                sourceComponent: window.overlay === "settings" ? settingsPage : bluetoothPage
+                sourceComponent: window.overlay === "settings" ? settingsPage
+                                 : window.overlay === "profile" ? profilePage : bluetoothPage
             }
         }
     }
@@ -90,6 +145,16 @@ ApplicationWindow {
     Component {
         id: settingsPage
         SettingsView {
+            topInset: window.safeTop
+            bottomInset: window.safeBottom
+            onCloseRequested: window.overlay = ""
+        }
+    }
+
+    Component {
+        id: profilePage
+        ProfileView {
+            userId: window.profileUserId
             topInset: window.safeTop
             bottomInset: window.safeBottom
             onCloseRequested: window.overlay = ""
@@ -121,19 +186,11 @@ ApplicationWindow {
         }
     }
 
-    // Window close button (desktop) and the Back key (Android)
+    // Window close button. On Android the Back key normally arrives as Keys.onBackPressed above;
+    // this is the fallback when the system closes the window instead.
     onClosing: (close) => {
         if (Device.isAndroid) {
-            if (overlay !== "") {
-                overlay = ""
-                close.accepted = false
-            } else if (!wide && Chat.hasCurrentPeer) {
-                Chat.closeChat()
-                close.accepted = false
-            } else if (Background.shouldHideOnClose()) {
-                Background.moveToBackground()
-                close.accepted = false
-            }
+            close.accepted = false      // never closed by Qt: MainActivity decides
         } else if (Background.shouldHideOnClose()) {
             close.accepted = false
             window.hide()

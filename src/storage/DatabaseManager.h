@@ -28,11 +28,29 @@ public:
     bool updateMessageStatus(const QString &messageId, int status);
     QVariantList getMessages(const QString &conversationId, int limit = 200);
     QVariantMap lastMessage(const QString &conversationId);
+    /** Own messages that still have to be delivered (status 0/3, younger than maxAgeHours). */
+    QVariantList pendingMessages(const QString &fromUserId, const QString &toUserId, int maxAgeHours = 24);
+    QStringList peersWithPending(const QString &fromUserId);
+    /** Marks messages left in "sending" by a previous run as queued, and expires very old ones. */
+    void requeueStale(const QString &fromUserId, int maxAgeHours = 24);
 
     // Peers
     bool savePeer(const QString &userId, const QString &alias, const QString &deviceName,
                   const QString &ipAddress, const QString &btAddress);
     QVariantList getPeers();
+    void setNickname(const QString &userId, const QString &nickname);
+    void setAvatarHash(const QString &userId, const QString &hash);
+
+    // Deleting
+    QVariantMap messageInfo(const QString &messageId);        // {from, to, type, content}
+    bool deleteMessage(const QString &messageId);
+    /** Removes the whole conversation; returns the attachment files that belonged to it. */
+    QStringList deleteConversation(const QString &conversationId);
+    // "delete for everyone" requests that still have to reach the peer
+    void addPendingDelete(const QString &messageId, const QString &peerId);
+    void removePendingDelete(const QString &messageId);
+    QStringList pendingDeletes(const QString &peerId);
+    QStringList peersWithPendingDeletes();
 
 signals:
     void error(const QString &message);

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 import LetsChat
 
 Rectangle {
@@ -12,6 +13,13 @@ Rectangle {
     signal closeRequested()
 
     AliasDialog { id: aliasDialog }
+
+    FileDialog {
+        id: photoPicker
+        title: qsTr("Choose a profile photo")
+        nameFilters: [qsTr("Images (*.png *.jpg *.jpeg *.gif *.webp *.bmp)"), qsTr("All files (*)")]
+        onAccepted: if (!Identity.setAvatar(selectedFile)) Chat.notice(qsTr("Could not use that picture"))
+    }
 
     // a titled card that stacks its children
     component Card: Rectangle {
@@ -81,6 +89,7 @@ Rectangle {
                 spacing: 4
                 IconButton { iconName: "back"; onClicked: root.closeRequested() }
                 Label {
+                    Layout.fillWidth: true
                     text: qsTr("Settings")
                     font.pixelSize: 20
                     font.bold: true
@@ -112,7 +121,13 @@ Rectangle {
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 14
-                        Avatar { name: Identity.alias; seed: Identity.userId; size: 56 }
+                        Avatar {
+                            name: Identity.alias
+                            seed: Identity.userId
+                            source: Identity.avatarUrl
+                            size: 64
+                            TapHandler { onTapped: photoPicker.open() }
+                        }
                         ColumnLayout {
                             Layout.fillWidth: true
                             spacing: 1
@@ -125,6 +140,24 @@ Rectangle {
                             }
                         }
                         Button { text: qsTr("Edit"); flat: true; onClicked: aliasDialog.open() }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Button { text: qsTr("Change photo"); flat: true; onClicked: photoPicker.open() }
+                        Button {
+                            text: qsTr("Remove photo")
+                            flat: true
+                            visible: Identity.avatarUrl !== ""
+                            onClicked: Identity.clearAvatar()
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: qsTr("Your photo is shared with people you chat with.")
+                        font.pixelSize: 12
+                        color: Theme.textSecondary
                     }
                 }
 
@@ -157,6 +190,17 @@ Rectangle {
                         Switch {
                             checked: Background.runInBackground
                             onToggled: Background.runInBackground = checked
+                        }
+                    }
+                    Row2 {
+                        visible: Device.isAndroid && Background.runInBackground
+                        title: qsTr("Messages only arrive when I open the app?")
+                        subtitle: qsTr("Some phones (%1) freeze background apps on their own, ignoring the normal settings. Allow LetsChat to run in the background in your phone's battery / app manager. Messages sent meanwhile are queued and delivered as soon as the phone wakes up.")
+                                  .arg(Background.manufacturer)
+                        Button {
+                            text: qsTr("App settings")
+                            flat: true
+                            onClicked: Background.openAppSettings()
                         }
                     }
                     Row2 {
@@ -207,8 +251,7 @@ Rectangle {
                     }
                     Row2 {
                         title: qsTr("Ports")
-                        subtitle: qsTr("UDP %1 (discovery), TCP %2 (messages)")
-                                  .arg(45454).arg(45455)
+                        subtitle: qsTr("UDP %1 (discovery), TCP %2 (messages)").arg(45454).arg(45455)
                     }
                 }
 
@@ -229,5 +272,4 @@ Rectangle {
             }
         }
     }
-
 }

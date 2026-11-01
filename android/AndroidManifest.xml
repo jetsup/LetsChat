@@ -15,7 +15,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Bluetooth (legacy permissions for Android <= 11, new runtime ones for 12+) -->
@@ -26,7 +26,15 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
 
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    <queries>
+        <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
+    </queries>
 
     <application
         android:label="LetsChat"
@@ -35,7 +43,7 @@
         android:allowBackup="false">
 
         <activity
-            android:name="org.qtproject.qt.android.bindings.QtActivity"
+            android:name="com.smalnets.letschat.MainActivity"
             android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|mcc|mnc|density"
             android:label="LetsChat"
             android:launchMode="singleTask"
@@ -54,10 +62,19 @@
             <meta-data android:name="android.app.background_running" android:value="true" />
         </activity>
 
+        <!-- Lets the camera app write the picture into our private cache -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.smalnets.letschat.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- Keeps the process (and therefore LAN/Bluetooth sockets) alive in the background -->
         <service
             android:name="com.smalnets.letschat.LetsChatService"
             android:exported="false"
-            android:foregroundServiceType="connectedDevice" />
+            android:foregroundServiceType="connectedDevice|remoteMessaging" />
     </application>
 </manifest>

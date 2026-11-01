@@ -18,6 +18,7 @@ public:
     QString localIp() const { return m_localIp; }
     bool isConnected() const { return !m_localIp.isEmpty(); }
     void start();
+    void setBackground(bool background) { m_timer->setInterval(background ? 10000 : 4000); }
 
 signals:
     void networkChanged();
