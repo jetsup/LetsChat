@@ -283,7 +283,7 @@ Rectangle {
             color: Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.15)
             Label {
                 anchors.centerIn: parent
-                text: qsTr("%1 is offline — messages are sent when they are back").arg(Chat.currentPeerName)
+                text: qsTr("%1 is offline. Messages are sent when they are back").arg(Chat.currentPeerName)
                 font.pixelSize: 12
                 color: Theme.text
             }
