@@ -3,41 +3,39 @@
 
 #include <QObject>
 #include <QString>
-#include <QUuid>
 
+/**
+ * Persistent identity of this installation: a stable UUID, an optional alias and
+ * whether the onboarding screen has been completed.
+ */
 class IdentityManager : public QObject
 {
     Q_OBJECT
-    Q_PROPERTY(QString userId READ userId NOTIFY identityChanged)
+    Q_PROPERTY(QString userId READ userId CONSTANT)
     Q_PROPERTY(QString alias READ alias WRITE setAlias NOTIFY aliasChanged)
-    Q_PROPERTY(QString deviceName READ deviceName NOTIFY identityChanged)
-    Q_PROPERTY(bool isFirstRun READ isFirstRun NOTIFY identityChanged)
+    Q_PROPERTY(QString deviceName READ deviceName CONSTANT)
+    Q_PROPERTY(bool onboarded READ onboarded NOTIFY onboardedChanged)
 
 public:
     explicit IdentityManager(QObject *parent = nullptr);
-    
-    QString userId() const;
-    QString alias() const;
+
+    QString userId() const { return m_userId; }
+    QString alias() const;              // alias, or the device name when none is set
     void setAlias(const QString &alias);
-    QString deviceName() const;
-    bool isFirstRun() const;
-    
-    Q_INVOKABLE void generateIfNeeded();
-    Q_INVOKABLE void resetIdentity();
-    
+    QString deviceName() const { return m_deviceName; }
+    bool onboarded() const { return m_onboarded; }
+
+    Q_INVOKABLE void completeOnboarding(const QString &alias);
+
 signals:
-    void identityChanged();
     void aliasChanged();
-    
+    void onboardedChanged();
+
 private:
-    void loadIdentity();
-    void saveIdentity();
-    QString generateUniqueId() const;
-    
     QString m_userId;
     QString m_alias;
     QString m_deviceName;
-    bool m_isFirstRun;
+    bool m_onboarded = false;
 };
 
 #endif // IDENTITYMANAGER_H

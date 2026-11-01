@@ -1,26 +1,25 @@
 #ifndef CRYPTOUTILS_H
 #define CRYPTOUTILS_H
 
-#include <QObject>
-#include <QString>
 #include <QByteArray>
+#include <QString>
 
-class CryptoUtils : public QObject
+/**
+ * Small authenticated stream cipher built from Qt's HMAC-SHA256 (keystream in counter
+ * mode + encrypt-then-MAC).  It protects the local message database against casual
+ * inspection; it is not a replacement for a vetted AEAD such as AES-GCM.
+ */
+class CryptoUtils
 {
-    Q_OBJECT
-
 public:
-    explicit CryptoUtils(QObject *parent = nullptr);
-    
-    Q_INVOKABLE static QByteArray encrypt(const QByteArray &data, const QString &key);
-    Q_INVOKABLE static QByteArray decrypt(const QByteArray &data, const QString &key);
-    Q_INVOKABLE static QString encryptString(const QString &data, const QString &key);
-    Q_INVOKABLE static QString decryptString(const QString &data, const QString &key);
-    Q_INVOKABLE static QByteArray generateKey(int length = 32);
-    Q_INVOKABLE static QString generateKeyString();
-    
-private:
-    static QByteArray deriveKey(const QString &key);
+    static QByteArray encrypt(const QByteArray &plain, const QByteArray &key);
+    /** Returns a null QByteArray when the data was tampered with or the key is wrong. */
+    static QByteArray decrypt(const QByteArray &blob, const QByteArray &key);
+
+    static QString encryptString(const QString &text, const QByteArray &key);
+    static QString decryptString(const QString &base64, const QByteArray &key);
+
+    static QByteArray randomBytes(int length);
 };
 
 #endif // CRYPTOUTILS_H

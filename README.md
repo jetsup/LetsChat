@@ -1,48 +1,55 @@
 # LetsChat
 
-A cross-platform Qt 6.12 LAN chat application for communicating within local networks. Works on Desktop (Windows, Linux, macOS) and Android.
+A Qt 6 / QML messenger for talking to people **nearby – no internet needed**. Works on Linux, Windows,
+macOS and Android.
 
 ## Features
 
-- **LAN Discovery**: Automatically finds other devices running LetsChat on the same network
-- **Peer Management**: Tracks peers across network changes - marks previous LAN peers as offline when switching networks
-- **Unique Identity**: Each device gets a unique UUID on first run, with customizable alias
-- **Text & Media**: Exchange text messages and media files
-- **Message Persistence**: Messages are stored locally in encrypted SQLite database
-- **Encrypted Storage**: User data is encrypted before storage
-- **Background Operation**: Continues scanning for peers in background
-- **Notifications**: Platform-specific notifications for messages and files (Desktop & Android)
-- **Theme Support**: Light, Dark, and System theme modes
-- **Qt Designer Compatible**: UI files (.ui) are provided for Qt Designer
+- **Wi-Fi / LAN chat**: devices on the same network discover each other automatically (UDP broadcast) and
+  exchange messages over TCP with delivery confirmation
+- **Bluetooth chat**: scan for nearby devices, connect over Bluetooth Classic (RFCOMM) and chat when there is
+  no shared network; messages fall back to Bluetooth if Wi-Fi delivery fails
+- **Background service**: Android foreground service (persistent notification) and desktop system tray, so
+  messages keep arriving when the window is closed (some vendors' own freezers can still suspend the app –
+  see the documentation)
+- **Notifications** for new messages (Android notification channel / tray balloon)
+- **Persistent history**: SQLite database, message bodies encrypted at rest; unread counters, last-message preview
+- **Responsive Material UI**: side-by-side layout on wide windows, single column on phones; light, dark or
+  system theme
+- Unique device identity (UUID) with an editable display name
 
-## Project Structure
+> Security note: LAN/Bluetooth traffic is not end-to-end encrypted. See [DOCUMENTATION.md](DOCUMENTATION.md#4-storage-and-security).
+
+## Documentation
+
+Full documentation (user guide, architecture, protocols, Android notes, debugging, fixed issues):
+**[DOCUMENTATION.md](DOCUMENTATION.md)**
+
+## Project structure
 
 ```
 LetsChat/
-├── src/                    # C++ source code
-│   ├── core/              # Core functionality (Identity, Theme, Settings, AppConfig)
-│   ├── network/           # LAN discovery, peer management, file transfer
-│   ├── storage/           # Database and encryption
-│   ├── notifications/     # Notification system
-│   ├── models/            # QML models
-│   ├── platform/          # Platform-specific background service
-│   └── utils/             # Utilities
-├── qml/                   # QML UI files
-│   ├── components/        # Reusable components
-│   ├── views/            # Main views
-│   ├── dialogs/          # Dialogs
-│   └── themes/           # Theme definitions
-├── forms/                 # Qt Designer UI files (.ui)
-├── resources/             # Resources (icons, etc.)
-└── android/              # Android-specific configuration
+├── main.cpp            # wiring
+├── src/
+│   ├── core/           # AppConfig, IdentityManager, ThemeManager
+│   ├── chat/           # ChatController (transports <-> storage <-> UI)
+│   ├── network/        # Discovery (UDP), Transfer (TCP), Bluetooth (RFCOMM), PeerManager, LanTracker
+│   ├── storage/        # SQLite + encryption
+│   ├── models/         # PeerListModel, MessageModel
+│   ├── notifications/  # NotificationManager
+│   ├── platform/       # BackgroundService (Android service / desktop tray)
+│   └── utils/          # DeviceInfo
+├── qml/                # Main.qml, views/, components/, dialogs/, themes/
+├── android/            # manifest, foreground service (Java), icons
+└── resources/          # app icon
 ```
 
 ## Building
 
 ### Prerequisites
 
-- Qt 6.12 or later
-- CMake 3.16+
+- Qt 6.5 or later (developed with 6.12) incl. Bluetooth, Quick Controls 2, SQL (+ Widgets on desktop)
+- CMake 3.21+
 - Ninja (recommended)
 - For Android: Android SDK/NDK, Qt for Android
 
@@ -119,7 +126,7 @@ After building, run the executable:
 ### Android
 - **Debug**: Deploy via Qt Creator or adb
 ```bash
-adb install -r build/Qt_6_12_0_for_Android_arm64_v8a_Debug/android-build/app-debug.apk
+adb install -r build/<android-kit>/android-build-appLetsChat/build/outputs/apk/debug/android-build-appLetsChat-debug.apk
 ```
 
 - **Release**: Install the signed APK
@@ -129,26 +136,24 @@ adb install -r your_app_release.apk
 
 ## First Run
 
-1. Launch the app - you'll see the onboarding screen
-2. Your device name is shown automatically
-3. Optionally set an alias (others will see this if set, otherwise device name)
-4. Click "Get Started"
-5. The app will start scanning for peers on your LAN
+1. Launch the app and enter a display name (optional), then tap **Get started**
+2. Allow the notification and "nearby devices" (Bluetooth) permissions on Android
+3. People on the same Wi-Fi appear automatically; for Bluetooth tap the Bluetooth icon > scan > Connect
 
 ## Usage
 
-- **Switching Networks**: When you join a different LAN, peers from the previous network are automatically marked offline
-- **Changing Alias**: Use the menu (...) > Change Alias
-- **Settings**: Access theme, notifications, and other settings
-- **Background Mode**: The app continues scanning even when minimized
+- **Switching networks**: peers of the previous network are marked offline automatically
+- **Settings** (gear icon): display name, theme, background running, notifications, Bluetooth
+- **Background mode**: Android keeps a foreground service running; on desktop closing the window hides it to the tray
 
 ## Package Information
 
-- **Android Package Name**: `com.smalnets.letschat`
+- **Android package**: `com.smalnets.letschat` (min. Android 9 / API 28 with Qt 6.12)
 - **Organization**: SmalNets
-- **Version**: 0.1
+- **Version**: 0.2
 
 ## Network Ports
 
 - Discovery: UDP 45454
-- File Transfer: TCP 45455
+- Messages: TCP 45455
+- Bluetooth: RFCOMM service UUID `e3a1c5a4-7c6e-4b0a-9f55-1d2b7a0c9e31`

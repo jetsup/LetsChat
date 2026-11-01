@@ -1,54 +1,58 @@
 #ifndef TRANSFERSERVICE_H
 #define TRANSFERSERVICE_H
 
+#include <QByteArray>
+#include <QHash>
+#include <QJsonObject>
 #include <QObject>
 #include <QTcpServer>
 #include <QTcpSocket>
-#include <QFile>
-#include <QMap>
-#include <QDateTime>
+#include <QTimer>
 
+class FrameParser;
+
+/**
+ * Newline-delimited JSON over short-lived TCP connections.
+ *   -> {"type":"text", id, fromUserId, alias, content, timestamp}\n
+ *   -> {"type":"file", id, kind, name, size, ...}\n<size raw bytes>
+ *   <- {"type":"ack","id"}\n
+ */
 class TransferService : public QObject
 {
     Q_OBJECT
 
 public:
-    explicit TransferService(QObject *parent = nullptr);
-    ~TransferService();
-    
-    Q_INVOKABLE void startServer();
-    Q_INVOKABLE void stopServer();
-    Q_INVOKABLE void sendTextMessage(const QString &targetIp, quint16 port, 
-                                    const QString &message, const QString &fromUserId);
-    Q_INVOKABLE void sendFile(const QString &targetIp, quint16 port,
-                             const QString &filePath, const QString &fromUserId);
-    
+    explicit TransferService(const QString &receiveDir, QObject *parent = nullptr);
+    ~TransferService() override;
+
+    void startServer();
+    void stopServer();
+    bool isListening() const { return m_server->isListening(); }
+
+    /** Results are reported through sendFinished(). */
+    void sendText(const QString &targetIp, const QString &messageId, const QString &fromUserId,
+                  const QString &alias, const QString &content, const QString &timestamp);
+    void sendFile(const QString &targetIp, const QString &messageId, const QString &fromUserId,
+                  const QString &alias, const QString &kind, const QString &filePath,
+                  const QString &fileName, qint64 size, const QString &timestamp);
+
 signals:
-    void textMessageReceived(const QString &fromUserId, const QString &message, const QString &senderIp);
-    void fileTransferRequest(const QString &fromUserId, const QString &fileName, 
-                            qint64 fileSize, const QString &transferId);
-    void fileTransferProgress(const QString &transferId, qint64 bytesTransferred, qint64 totalBytes);
-    void fileTransferComplete(const QString &transferId, const QString &filePath);
-    void transferError(const QString &error);
-    
-private slots:
-    void onNewConnection();
-    void onReadyRead();
-    void onDisconnected();
-    
+    void textReceived(const QString &fromUserId, const QString &alias, const QString &messageId,
+                      const QString &content, const QString &timestamp, const QString &senderIp);
+    void fileReceived(const QString &fromUserId, const QString &alias, const QString &messageId,
+                      const QString &kind, const QString &fileName, qint64 size,
+                      const QString &savedPath, const QString &timestamp, const QString &senderIp);
+    void sendFinished(const QString &messageId, bool ok, const QString &error);
+
 private:
-    struct TransferInfo {
-        QTcpSocket *socket;
-        QString transferId;
-        QString fileName;
-        qint64 fileSize;
-        qint64 bytesReceived;
-        QFile *file;
-        bool isReceiving;
-    };
-    
-    QTcpServer *m_tcpServer;
-    QMap<QTcpSocket*, TransferInfo> m_transfers;
+    void onNewConnection();
+    void startSend(const QString &ip, const QString &messageId, const QJsonObject &header,
+                   const QString &filePath);
+
+    QTcpServer *m_server;
+    QString m_receiveDir;
+    QTimer *m_retryTimer;
+    QList<QTcpSocket *> m_incoming;
 };
 
 #endif // TRANSFERSERVICE_H

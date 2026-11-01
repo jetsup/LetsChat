@@ -1,7 +1,0 @@
-<RCC>
-    <qresource prefix="/icons">
-        <file>placeholder.svg</file>
-    </qresource>
-    <qresource prefix="/qml">
-    </qresource>
-</RCC>

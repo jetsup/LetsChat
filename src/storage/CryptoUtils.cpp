@@ -1,59 +1,74 @@
 #include "CryptoUtils.h"
-#include <QCryptographicHash>
+#include <QMessageAuthenticationCode>
 #include <QRandomGenerator>
-#include <QDebug>
 
-CryptoUtils::CryptoUtils(QObject *parent)
-    : QObject(parent)
-{
-}
+namespace {
+constexpr int NonceLen = 16;
+constexpr int TagLen = 32;
 
-QByteArray CryptoUtils::deriveKey(const QString &key)
+QByteArray keystream(const QByteArray &key, const QByteArray &nonce, qsizetype length)
 {
-    return QCryptographicHash::hash(key.toUtf8(), QCryptographicHash::Sha256);
-}
-
-QByteArray CryptoUtils::encrypt(const QByteArray &data, const QString &key)
-{
-    QByteArray derived = deriveKey(key);
-    QByteArray encrypted = data;
-    // Simple XOR encryption with key (can be replaced with AES in production)
-    for (int i = 0; i < encrypted.size(); ++i) {
-        encrypted[i] = encrypted[i] ^ derived[i % derived.size()];
+    QByteArray out;
+    out.reserve(length + 32);
+    quint32 counter = 0;
+    while (out.size() < length) {
+        QByteArray block = nonce;
+        for (int s = 24; s >= 0; s -= 8)
+            block.append(char((counter >> s) & 0xff));
+        out += QMessageAuthenticationCode::hash(block, key + "enc", QCryptographicHash::Sha256);
+        ++counter;
     }
-    return encrypted;
+    out.truncate(length);
+    return out;
 }
 
-QByteArray CryptoUtils::decrypt(const QByteArray &data, const QString &key)
+QByteArray macOf(const QByteArray &key, const QByteArray &nonceAndCipher)
 {
-    // XOR is symmetric
-    return encrypt(data, key);
+    return QMessageAuthenticationCode::hash(nonceAndCipher, key + "mac", QCryptographicHash::Sha256);
+}
+} // namespace
+
+QByteArray CryptoUtils::randomBytes(int length)
+{
+    QByteArray b(length, Qt::Uninitialized);
+    QRandomGenerator::system()->generate(b.begin(), b.end());
+    return b;
 }
 
-QString CryptoUtils::encryptString(const QString &data, const QString &key)
+QByteArray CryptoUtils::encrypt(const QByteArray &plain, const QByteArray &key)
 {
-    QByteArray encrypted = encrypt(data.toUtf8(), key);
-    return QString::fromLatin1(encrypted.toBase64());
+    const QByteArray nonce = randomBytes(NonceLen);
+    QByteArray cipher = plain;
+    const QByteArray ks = keystream(key, nonce, plain.size());
+    for (qsizetype i = 0; i < cipher.size(); ++i)
+        cipher[i] = char(cipher[i] ^ ks[i]);
+    const QByteArray body = nonce + cipher;
+    return body + macOf(key, body);
 }
 
-QString CryptoUtils::decryptString(const QString &data, const QString &key)
+QByteArray CryptoUtils::decrypt(const QByteArray &blob, const QByteArray &key)
 {
-    QByteArray decoded = QByteArray::fromBase64(data.toLatin1());
-    QByteArray decrypted = decrypt(decoded, key);
-    return QString::fromUtf8(decrypted);
+    if (blob.size() < NonceLen + TagLen)
+        return {};
+    const QByteArray body = blob.left(blob.size() - TagLen);
+    const QByteArray tag = blob.right(TagLen);
+    if (macOf(key, body) != tag)
+        return {};
+    const QByteArray nonce = body.left(NonceLen);
+    QByteArray plain = body.mid(NonceLen);
+    const QByteArray ks = keystream(key, nonce, plain.size());
+    for (qsizetype i = 0; i < plain.size(); ++i)
+        plain[i] = char(plain[i] ^ ks[i]);
+    return plain.isNull() ? QByteArray("") : plain;
 }
 
-QByteArray CryptoUtils::generateKey(int length)
+QString CryptoUtils::encryptString(const QString &text, const QByteArray &key)
 {
-    QByteArray key;
-    key.resize(length);
-    for (int i = 0; i < length; ++i) {
-        key[i] = static_cast<char>(QRandomGenerator::global()->bounded(256));
-    }
-    return key;
+    return QString::fromLatin1(encrypt(text.toUtf8(), key).toBase64());
 }
 
-QString CryptoUtils::generateKeyString()
+QString CryptoUtils::decryptString(const QString &base64, const QByteArray &key)
 {
-    return QString::fromLatin1(generateKey(32).toBase64());
+    const QByteArray plain = decrypt(QByteArray::fromBase64(base64.toLatin1()), key);
+    return plain.isNull() ? QString() : QString::fromUtf8(plain);
 }

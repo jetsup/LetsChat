@@ -1,13 +1,18 @@
 #ifndef DISCOVERYSERVICE_H
 #define DISCOVERYSERVICE_H
 
-#include <QObject>
-#include <QUdpSocket>
-#include <QTimer>
+#include <QElapsedTimer>
+#include <QHash>
 #include <QJsonObject>
-#include <QMap>
-#include <QString>
+#include <QObject>
+#include <QTimer>
+#include <QUdpSocket>
 
+/**
+ * UDP broadcast presence protocol.  Every DISCOVERY_INTERVAL_MS we announce
+ * {userId, alias, deviceName} on every IPv4 broadcast address; peers that stay silent
+ * for PEER_TIMEOUT_MS are reported as lost.
+ */
 class DiscoveryService : public QObject
 {
     Q_OBJECT
@@ -15,35 +20,40 @@ class DiscoveryService : public QObject
 
 public:
     explicit DiscoveryService(QObject *parent = nullptr);
-    ~DiscoveryService();
-    
-    bool isRunning() const;
-    
-    Q_INVOKABLE void startDiscovery();
-    Q_INVOKABLE void stopDiscovery();
-    Q_INVOKABLE void setLocalInfo(const QString &userId, const QString &alias, 
-                                  const QString &deviceName);
-    
+    ~DiscoveryService() override;
+
+    bool isRunning() const { return m_isRunning; }
+
+    void startDiscovery();
+    void stopDiscovery();
+    void setLocalInfo(const QString &userId, const QString &alias, const QString &deviceName);
+    /** Forget every known peer (used when we move to another network) and announce again. */
+    void reset();
+
 signals:
-    void peerDiscovered(const QString &userId, const QString &alias, 
-                       const QString &deviceName, const QString &ipAddress);
+    void peerDiscovered(const QString &userId, const QString &alias, const QString &deviceName,
+                        const QString &ipAddress);
     void peerLost(const QString &userId);
     void runningChanged();
-    
-private slots:
+
+private:
     void sendDiscoveryBroadcast();
     void readPendingDatagrams();
-    
-private:
+    void expirePeers();
     void processDiscoveryMessage(const QJsonObject &message, const QString &senderIp);
-    
+    bool bindSocket();
+
+    struct Known { QString ip; QString alias; QString deviceName; qint64 lastSeenMs; };
+
     QUdpSocket *m_udpSocket;
     QTimer *m_broadcastTimer;
-    bool m_isRunning;
-    QString m_localUserId;
-    QString m_localAlias;
-    QString m_localDeviceName;
-    QMap<QString, QString> m_discoveredPeers; // userId -> ipAddress
+    QTimer *m_expireTimer;
+    QTimer *m_retryTimer;
+    QElapsedTimer m_clock;
+    bool m_isRunning = false;
+    bool m_wanted = false;
+    QString m_localUserId, m_localAlias, m_localDeviceName;
+    QHash<QString, Known> m_known;
 };
 
 #endif // DISCOVERYSERVICE_H

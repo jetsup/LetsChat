@@ -4,6 +4,9 @@
 #include <QObject>
 #include <QString>
 
+class BackgroundService;
+
+/** Shows message notifications: Android notification channel / desktop tray balloon. */
 class NotificationManager : public QObject
 {
     Q_OBJECT
@@ -11,23 +14,19 @@ class NotificationManager : public QObject
 
 public:
     explicit NotificationManager(QObject *parent = nullptr);
-    
-    bool enabled() const;
+
+    bool enabled() const { return m_enabled; }
     void setEnabled(bool enabled);
-    
-    Q_INVOKABLE void showNotification(const QString &title, const QString &message);
-    Q_INVOKABLE void showMessageNotification(const QString &senderName, const QString &message);
-    Q_INVOKABLE void showFileNotification(const QString &senderName, const QString &fileName);
-    
+    void setBackgroundService(BackgroundService *bg) { m_background = bg; }
+
+    void showMessageNotification(const QString &senderName, const QString &message, const QString &peerId);
+
 signals:
     void enabledChanged();
-    void notificationClicked(const QString &data);
-    
+
 private:
-    void showDesktopNotification(const QString &title, const QString &message);
-    void showAndroidNotification(const QString &title, const QString &message);
-    
-    bool m_enabled;
+    bool m_enabled = true;
+    BackgroundService *m_background = nullptr;
 };
 
 #endif // NOTIFICATIONMANAGER_H

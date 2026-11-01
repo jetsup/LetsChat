@@ -1,65 +1,50 @@
 #include "NotificationManager.h"
-#include "utils/DeviceInfo.h"
+#include "platform/BackgroundService.h"
 #include <QDebug>
+#include <QSettings>
 
 #ifdef Q_OS_ANDROID
 #include <QJniObject>
+#include <QCoreApplication>
 #endif
 
-NotificationManager::NotificationManager(QObject *parent)
-    : QObject(parent)
-    , m_enabled(true)
+NotificationManager::NotificationManager(QObject *parent) : QObject(parent)
 {
-}
-
-bool NotificationManager::enabled() const
-{
-    return m_enabled;
+    m_enabled = QSettings().value("app/enableNotifications", true).toBool();
 }
 
 void NotificationManager::setEnabled(bool enabled)
 {
-    if (m_enabled != enabled) {
-        m_enabled = enabled;
-        emit enabledChanged();
-    }
+    if (m_enabled == enabled)
+        return;
+    m_enabled = enabled;
+    QSettings().setValue("app/enableNotifications", enabled);
+    if (enabled && m_background)
+        m_background->requestNotificationPermission();
+    emit enabledChanged();
 }
 
-void NotificationManager::showNotification(const QString &title, const QString &message)
+void NotificationManager::showMessageNotification(const QString &senderName, const QString &message,
+                                                  const QString &peerId)
 {
-    if (!m_enabled) {
+    if (!m_enabled)
+        return;
+#ifdef Q_OS_ANDROID
+    QJniObject context = QNativeInterface::QAndroidApplication::context();
+    if (!context.isValid()) {
+        qWarning() << "Notification: no Android context";
         return;
     }
-    
-    if (DeviceInfo::isAndroid()) {
-        showAndroidNotification(title, message);
-    } else {
-        showDesktopNotification(title, message);
-    }
-}
-
-void NotificationManager::showMessageNotification(const QString &senderName, const QString &message)
-{
-    showNotification(QStringLiteral("New message from %1").arg(senderName), message);
-}
-
-void NotificationManager::showFileNotification(const QString &senderName, const QString &fileName)
-{
-    showNotification(QStringLiteral("File from %1").arg(senderName), 
-                    QStringLiteral("Received: %1").arg(fileName));
-}
-
-void NotificationManager::showDesktopNotification(const QString &title, const QString &message)
-{
-    qDebug() << "Desktop notification:" << title << "-" << message;
-    // Platform-specific implementations would go here
-    // For Linux: libnotify, for macOS: NSUserNotification, for Windows: Toast notifications
-}
-
-void NotificationManager::showAndroidNotification(const QString &title, const QString &message)
-{
-    qDebug() << "Android notification:" << title << "-" << message;
-#ifdef Q_OS_ANDROID
-    // Android notification implementation would go here using JNI
+    QJniObject::callStaticMethod<void>(
+        "com/smalnets/letschat/LetsChatService", "showMessageNotification",
+        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;I)V",
+        context.object(), QJniObject::fromString(senderName).object<jstring>(),
+        QJniObject::fromString(message).object<jstring>(), jint(qHash(peerId)));
+#else
+    Q_UNUSED(peerId)
+    if (m_background)
+        m_background->showTrayMessage(senderName, message);
+    else
+        qInfo() << "Notification:" << senderName << message;
 #endif
 }

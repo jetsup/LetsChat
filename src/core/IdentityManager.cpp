@@ -1,20 +1,20 @@
 #include "IdentityManager.h"
+#include "utils/DeviceInfo.h"
 #include <QSettings>
-#include <QHostInfo>
-#include <QSysInfo>
 #include <QUuid>
-#include <QDebug>
 
 IdentityManager::IdentityManager(QObject *parent)
     : QObject(parent)
-    , m_isFirstRun(true)
 {
-    loadIdentity();
-}
-
-QString IdentityManager::userId() const
-{
-    return m_userId;
+    QSettings s;
+    m_userId = s.value("identity/userId").toString();
+    if (m_userId.isEmpty()) {
+        m_userId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        s.setValue("identity/userId", m_userId);
+    }
+    m_alias = s.value("identity/alias").toString();
+    m_onboarded = s.value("identity/onboarded", false).toBool();
+    m_deviceName = DeviceInfo::getDeviceName();
 }
 
 QString IdentityManager::alias() const
@@ -24,63 +24,22 @@ QString IdentityManager::alias() const
 
 void IdentityManager::setAlias(const QString &alias)
 {
-    if (m_alias != alias) {
-        m_alias = alias;
-        saveIdentity();
-        emit aliasChanged();
+    const QString trimmed = alias.trimmed();
+    // Setting the alias to the device name (or nothing) means "use the default".
+    const QString stored = (trimmed == m_deviceName) ? QString() : trimmed;
+    if (m_alias == stored)
+        return;
+    m_alias = stored;
+    QSettings().setValue("identity/alias", m_alias);
+    emit aliasChanged();
+}
+
+void IdentityManager::completeOnboarding(const QString &alias)
+{
+    setAlias(alias);
+    if (!m_onboarded) {
+        m_onboarded = true;
+        QSettings().setValue("identity/onboarded", true);
+        emit onboardedChanged();
     }
-}
-
-QString IdentityManager::deviceName() const
-{
-    return m_deviceName;
-}
-
-bool IdentityManager::isFirstRun() const
-{
-    return m_isFirstRun;
-}
-
-void IdentityManager::generateIfNeeded()
-{
-    if (m_userId.isEmpty()) {
-        m_userId = generateUniqueId();
-        m_isFirstRun = true;
-        saveIdentity();
-        emit identityChanged();
-    }
-}
-
-void IdentityManager::resetIdentity()
-{
-    QSettings settings;
-    settings.remove("identity/userId");
-    settings.remove("identity/alias");
-    loadIdentity();
-    emit identityChanged();
-}
-
-void IdentityManager::loadIdentity()
-{
-    QSettings settings;
-    m_userId = settings.value("identity/userId", QString()).toString();
-    m_alias = settings.value("identity/alias", QString()).toString();
-    m_deviceName = QHostInfo::localHostName();
-    if (m_deviceName.isEmpty()) {
-        m_deviceName = QSysInfo::machineHostName();
-    }
-    m_isFirstRun = m_userId.isEmpty();
-}
-
-void IdentityManager::saveIdentity()
-{
-    QSettings settings;
-    settings.setValue("identity/userId", m_userId);
-    settings.setValue("identity/alias", m_alias);
-    settings.sync();
-}
-
-QString IdentityManager::generateUniqueId() const
-{
-    return QUuid::createUuid().toString(QUuid::WithoutBraces);
 }

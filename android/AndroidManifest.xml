@@ -2,40 +2,62 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.smalnets.letschat"
     android:installLocation="auto"
-    android:versionCode="1"
-    android:versionName="0.1">
-    
+    android:versionCode="2"
+    android:versionName="0.2">
+
+    <!-- Network (LAN chat) -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
+    <!-- Background service + notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Bluetooth (legacy permissions for Android <= 11, new runtime ones for 12+) -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+
     <application
         android:label="LetsChat"
         android:name="org.qtproject.qt.android.bindings.QtApplication"
         android:icon="@drawable/icon"
-        android:allowBackup="true"
-        android:fullBackupContent="true">
-        
+        android:allowBackup="false">
+
         <activity
             android:name="org.qtproject.qt.android.bindings.QtActivity"
             android:configChanges="orientation|uiMode|screenLayout|screenSize|smallestScreenSize|layoutDirection|locale|fontScale|keyboard|keyboardHidden|navigation|mcc|mnc|density"
             android:label="LetsChat"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:screenOrientation="unspecified"
             android:exported="true">
-            
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            
+
             <meta-data android:name="android.app.lib_name" android:value="appLetsChat" />
             <meta-data android:name="android.app.arguments" android:value="" />
+            <!-- Keep the Qt event loop (discovery, TCP, Bluetooth) running while the activity is in the background -->
+            <meta-data android:name="android.app.background_running" android:value="true" />
         </activity>
+
+        <!-- Keeps the process (and therefore LAN/Bluetooth sockets) alive in the background -->
+        <service
+            android:name="com.smalnets.letschat.LetsChatService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
     </application>
 </manifest>

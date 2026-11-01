@@ -1,61 +1,36 @@
 #include "LanTracker.h"
 #include "utils/DeviceInfo.h"
-#include <QNetworkInterface>
-#include <QCryptographicHash>
 #include <QDebug>
 
 LanTracker::LanTracker(QObject *parent)
-    : QObject(parent)
-    , m_checkTimer(new QTimer(this))
-    , m_isConnected(false)
+    : QObject(parent), m_timer(new QTimer(this))
 {
-    connect(m_checkTimer, &QTimer::timeout, this, &LanTracker::checkNetwork);
-    m_checkTimer->start(5000);
+    connect(m_timer, &QTimer::timeout, this, &LanTracker::check);
 }
 
-QString LanTracker::currentNetworkId() const
+void LanTracker::start()
 {
-    return m_currentNetworkId;
+    m_timer->start(4000);
+    check();
 }
 
-bool LanTracker::isConnected() const
+void LanTracker::check()
 {
-    return m_isConnected;
-}
+    const QString ip = DeviceInfo::getLocalIpAddress();
+    // "Network id" = the /24 we are on. Good enough to notice Wi-Fi A -> Wi-Fi B.
+    QString id;
+    const QStringList parts = ip.split('.');
+    if (parts.size() == 4)
+        id = parts.mid(0, 3).join('.');
 
-void LanTracker::monitorNetwork()
-{
-    checkNetwork();
-}
-
-void LanTracker::checkNetwork()
-{
-    QString localIp = DeviceInfo::getLocalIpAddress();
-    m_isConnected = !localIp.isEmpty() && localIp != "127.0.0.1";
-    
-    QString networkId = generateNetworkId();
-    if (networkId != m_currentNetworkId && !m_currentNetworkId.isEmpty() && !networkId.isEmpty()) {
-        // Joined a new LAN
-        m_lastNetworkId = m_currentNetworkId;
-        m_currentNetworkId = networkId;
-        emit joinedNewLan(networkId);
-        qDebug() << "Joined new LAN, old:" << m_lastNetworkId << "new:" << m_currentNetworkId;
-    } else if (m_currentNetworkId != networkId) {
-        m_currentNetworkId = networkId;
+    if (ip != m_localIp) {
+        m_localIp = ip;
+        emit networkChanged();
     }
-    
-    emit networkChanged(m_currentNetworkId);
-}
-
-QString LanTracker::generateNetworkId() const
-{
-    // Generate network ID based on local IP
-    QString localIp = DeviceInfo::getLocalIpAddress();
-    QStringList parts = localIp.split('.');
-    if (parts.size() == 4) {
-        QString networkPrefix = parts[0] + "." + parts[1] + "." + parts[2];
-        QByteArray hash = QCryptographicHash::hash(networkPrefix.toUtf8(), QCryptographicHash::Sha256);
-        return hash.toHex().left(16);
+    if (id != m_networkId) {
+        m_networkId = id;
+        qInfo() << "LAN: network is now" << (id.isEmpty() ? "<none>" : id) << "local ip" << ip;
+        if (!id.isEmpty())
+            emit joinedNewLan(id);
     }
-    return QString();
 }

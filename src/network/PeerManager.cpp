@@ -1,87 +1,114 @@
 #include "PeerManager.h"
-#include "core/AppConfig.h"
+#include <QDebug>
+#include <QRegularExpression>
 
-PeerManager::PeerManager(QObject *parent)
+PeerManager::PeerManager(DatabaseManager *db, QObject *parent)
     : QObject(parent)
-    , m_discoveryService(new DiscoveryService(this))
+    , m_db(db)
+    , m_discovery(new DiscoveryService(this))
     , m_peerModel(new PeerListModel(this))
-    , m_databaseManager(new DatabaseManager(this))
-    , m_isScanning(false)
+    , m_proxy(new QSortFilterProxyModel(this))
 {
-    connect(m_discoveryService, &DiscoveryService::peerDiscovered, 
-            this, &PeerManager::onPeerDiscovered);
-    connect(m_discoveryService, &DiscoveryService::peerLost, 
-            this, &PeerManager::onPeerLost);
-    
-    connect(m_discoveryService, &DiscoveryService::runningChanged, [this]() {
-        m_isScanning = m_discoveryService->isRunning();
-        emit scanningChanged();
-    });
-    
-    m_databaseManager->initialize();
+    m_proxy->setSourceModel(m_peerModel);
+    m_proxy->setSortRole(PeerListModel::SortKeyRole);
+    m_proxy->setFilterRole(PeerListModel::DisplayNameRole);
+    m_proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
+    m_proxy->setDynamicSortFilter(true);
+    m_proxy->sort(0, Qt::DescendingOrder);
+
+    connect(m_discovery, &DiscoveryService::peerDiscovered, this, &PeerManager::onPeerDiscovered);
+    connect(m_discovery, &DiscoveryService::peerLost, this, &PeerManager::onPeerLost);
+    connect(m_discovery, &DiscoveryService::runningChanged, this, &PeerManager::scanningChanged);
+    connect(m_peerModel, &PeerListModel::onlineCountChanged, this, &PeerManager::onlineCountChanged);
+    connect(m_peerModel, &QAbstractItemModel::rowsInserted, this, &PeerManager::onlineCountChanged);
 }
 
-PeerListModel* PeerManager::peerModel() const
+void PeerManager::setFilterText(const QString &text)
 {
-    return m_peerModel;
+    if (m_filter == text)
+        return;
+    m_filter = text;
+    m_proxy->setFilterFixedString(text.trimmed());
+    emit filterTextChanged();
 }
 
-bool PeerManager::isScanning() const
-{
-    return m_isScanning;
-}
-
-void PeerManager::startScanning()
-{
-    m_discoveryService->startDiscovery();
-}
-
-void PeerManager::stopScanning()
-{
-    m_discoveryService->stopDiscovery();
-}
-
-void PeerManager::setLocalIdentity(const QString &userId, const QString &alias, 
-                                  const QString &deviceName)
+void PeerManager::setLocalIdentity(const QString &userId, const QString &alias,
+                                   const QString &deviceName)
 {
     m_localUserId = userId;
-    m_discoveryService->setLocalInfo(userId, alias, deviceName);
+    m_discovery->setLocalInfo(userId, alias, deviceName);
+}
+
+void PeerManager::loadKnownPeers()
+{
+    const QVariantList rows = m_db->getPeers();
+    for (const QVariant &v : rows) {
+        const QVariantMap p = v.toMap();
+        if (p["userId"].toString() == m_localUserId)
+            continue;
+        m_peerModel->loadKnown(p["userId"].toString(), p["alias"].toString(),
+                               p["deviceName"].toString(), p["ipAddress"].toString(),
+                               p["btAddress"].toString(), p["lastSeen"].toString());
+    }
 }
 
 void PeerManager::handleNetworkChange()
 {
-    // When joining a new LAN, mark all previous peers as offline
-    // They will only be marked online again if discovered on this new LAN
-    m_peerModel->markAllOffline();
-    if (m_databaseManager) {
-        m_databaseManager->markAllPeersOffline();
-    }
-    emit scanningChanged();
+    m_peerModel->markAllLanOffline();
+    m_discovery->reset();
 }
 
 void PeerManager::onPeerDiscovered(const QString &userId, const QString &alias,
-                                  const QString &deviceName, const QString &ipAddress)
+                                   const QString &deviceName, const QString &ipAddress)
 {
-    if (userId == m_localUserId) {
+    if (userId == m_localUserId)
         return;
-    }
-    
-    m_peerModel->addOrUpdatePeer(userId, alias, deviceName, ipAddress, true);
-    if (m_databaseManager) {
-        m_databaseManager->savePeer(userId, alias, deviceName, ipAddress, true);
-    }
-    emit peerConnected(userId);
+    const Peer *before = m_peerModel->find(userId);
+    const bool wasOnline = before && before->lanOnline;
+    m_peerModel->upsertLan(userId, alias, deviceName, ipAddress);
+    m_db->savePeer(userId, alias, deviceName, ipAddress, {});
+    if (!wasOnline)
+        emit peerOnline(userId);
 }
 
 void PeerManager::onPeerLost(const QString &userId)
 {
-    if (userId == m_localUserId) {
+    m_peerModel->setLanOffline(userId);
+    emit peerOffline(userId);
+}
+
+void PeerManager::onLanPeerSeen(const QString &userId, const QString &alias, const QString &ip)
+{
+    if (userId == m_localUserId || userId.isEmpty())
         return;
+    // Do not mark the peer online (discovery owns that state); just remember how to reach it.
+    const Peer *p = m_peerModel->find(userId);
+    if (!p) {
+        m_peerModel->loadKnown(userId, alias, alias, ip, {}, {});
+        m_db->savePeer(userId, alias, alias, ip, {});
+    } else if (p->ipAddress != ip) {
+        m_peerModel->loadKnown(userId, p->alias, p->deviceName, ip, p->btAddress, {});
+        m_db->savePeer(userId, p->alias, p->deviceName, ip, {});
     }
-    
-    m_peerModel->markPeerOffline(userId);
-    if (m_databaseManager) {
-        m_databaseManager->updatePeerStatus(userId, false);
-    }
-    emit peerDisconnected(userId);
+}
+
+void PeerManager::onBluetoothPeerUp(const QString &userId, const QString &alias,
+                                    const QString &deviceName, const QString &address)
+{
+    if (userId == m_localUserId)
+        return;
+    const Peer *before = m_peerModel->find(userId);
+    const bool wasOnline = before && before->isOnline();
+    m_peerModel->upsertBluetooth(userId, alias, deviceName, address);
+    m_db->savePeer(userId, alias, deviceName, {}, address);
+    if (!wasOnline)
+        emit peerOnline(userId);
+}
+
+void PeerManager::onBluetoothPeerDown(const QString &userId)
+{
+    m_peerModel->setBluetoothOffline(userId);
+    const Peer *p = m_peerModel->find(userId);
+    if (p && !p->isOnline())
+        emit peerOffline(userId);
 }

@@ -1,78 +1,119 @@
 #include "MessageModel.h"
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLocale>
+#include <QUrl>
 
-MessageModel::MessageModel(QObject *parent)
-    : QAbstractListModel(parent)
-{
-}
+MessageModel::MessageModel(QObject *parent) : QAbstractListModel(parent) {}
 
 int MessageModel::rowCount(const QModelIndex &parent) const
 {
-    if (parent.isValid())
-        return 0;
-    return m_messages.count();
+    return parent.isValid() ? 0 : int(m_messages.size());
 }
 
 QVariant MessageModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.row() >= m_messages.size())
-        return QVariant();
-    
-    const Message &message = m_messages[index.row()];
-    
+        return {};
+    const Message &m = m_messages.at(index.row());
     switch (role) {
-    case MessageIdRole:
-        return message.messageId;
-    case FromUserIdRole:
-        return message.fromUserId;
-    case ToUserIdRole:
-        return message.toUserId;
-    case ContentRole:
-        return message.content;
-    case MessageTypeRole:
-        return message.messageType;
-    case TimestampRole:
-        return message.timestamp;
-    case IsOwnMessageRole:
-        return message.isOwnMessage;
-    case TimeStringRole:
-        return message.timestamp.toString("hh:mm");
-    default:
-        return QVariant();
+    case MessageIdRole: return m.messageId;
+    case FromUserIdRole: return m.fromUserId;
+    case ToUserIdRole: return m.toUserId;
+    case ContentRole: return m.content;
+    case MessageTypeRole: return m.messageType;
+    case TimestampRole: return m.timestamp;
+    case IsOwnMessageRole: return m.isOwnMessage;
+    case TimeStringRole: return QLocale().toString(m.timestamp.time(), QLocale::ShortFormat);
+    case StatusRole: return m.status;
+    case AttachmentNameRole: return m.attachmentName;
+    case AttachmentPathRole: return m.attachmentPath;
+    case AttachmentUrlRole:
+        return m.attachmentPath.isEmpty() ? QString() : QUrl::fromLocalFile(m.attachmentPath).toString();
+    case AttachmentSizeRole:
+        return m.messageType > 0 ? QLocale().formattedDataSize(m.attachmentSize, 1) : QString();
+    case DayStringRole: {
+        // Used by the view to draw a date separator when the day changes.
+        const QDate d = m.timestamp.date();
+        if (d == QDate::currentDate()) return tr("Today");
+        if (d == QDate::currentDate().addDays(-1)) return tr("Yesterday");
+        return QLocale().toString(d, QLocale::LongFormat);
+    }
+    default: return {};
     }
 }
 
 QHash<int, QByteArray> MessageModel::roleNames() const
 {
-    QHash<int, QByteArray> roles;
-    roles[MessageIdRole] = "messageId";
-    roles[FromUserIdRole] = "fromUserId";
-    roles[ToUserIdRole] = "toUserId";
-    roles[ContentRole] = "content";
-    roles[MessageTypeRole] = "messageType";
-    roles[TimestampRole] = "timestamp";
-    roles[IsOwnMessageRole] = "isOwnMessage";
-    roles[TimeStringRole] = "timeString";
-    return roles;
+    return {
+        {MessageIdRole, "messageId"},   {FromUserIdRole, "fromUserId"},
+        {ToUserIdRole, "toUserId"},     {ContentRole, "content"},
+        {MessageTypeRole, "messageType"}, {TimestampRole, "timestamp"},
+        {IsOwnMessageRole, "isOwnMessage"}, {TimeStringRole, "timeString"},
+        {DayStringRole, "dayString"},   {StatusRole, "status"},
+        {AttachmentNameRole, "attachmentName"}, {AttachmentPathRole, "attachmentPath"},
+        {AttachmentUrlRole, "attachmentUrl"},   {AttachmentSizeRole, "attachmentSize"},
+    };
 }
 
-void MessageModel::addMessage(const QString &messageId, const QString &fromUserId,
-                             const QString &toUserId, const QString &content,
-                             int messageType, const QString &timestamp)
+Message MessageModel::make(const QString &id, const QString &from, const QString &to,
+                           const QString &content, int type, const QString &timestamp, int status,
+                           const QString &me)
 {
-    beginInsertRows(QModelIndex(), m_messages.count(), m_messages.count());
-    Message message;
-    message.messageId = messageId;
-    message.fromUserId = fromUserId;
-    message.toUserId = toUserId;
-    message.content = content;
-    message.messageType = messageType;
-    message.timestamp = QDateTime::fromString(timestamp, Qt::ISODate);
-    if (message.timestamp.isNull()) {
-        message.timestamp = QDateTime::currentDateTime();
+    Message m;
+    m.messageId = id;
+    m.fromUserId = from;
+    m.toUserId = to;
+    m.content = content;
+    m.messageType = type;
+    m.timestamp = QDateTime::fromString(timestamp, Qt::ISODate);
+    if (!m.timestamp.isValid())
+        m.timestamp = QDateTime::currentDateTime();
+    m.isOwnMessage = (from == me);
+    m.status = status;
+    if (type > 0) {
+        const QJsonObject o = QJsonDocument::fromJson(content.toUtf8()).object();
+        m.attachmentName = o["name"].toString();
+        m.attachmentPath = o["path"].toString();
+        m.attachmentSize = qint64(o["size"].toDouble());
     }
-    message.isOwnMessage = (fromUserId == m_currentUserId);
-    m_messages.append(message);
+    return m;
+}
+
+void MessageModel::addMessage(const QString &id, const QString &from, const QString &to,
+                              const QString &content, int type, const QString &timestamp, int status)
+{
+    const int row = int(m_messages.size());
+    beginInsertRows({}, row, row);
+    m_messages.append(make(id, from, to, content, type, timestamp, status, m_currentUserId));
     endInsertRows();
+    emit countChanged();
+}
+
+void MessageModel::setStatus(const QString &messageId, int status)
+{
+    for (int i = int(m_messages.size()) - 1; i >= 0; --i) {
+        if (m_messages[i].messageId == messageId) {
+            m_messages[i].status = status;
+            emit dataChanged(index(i), index(i), {StatusRole});
+            return;
+        }
+    }
+}
+
+void MessageModel::setMessages(const QVariantList &rows)
+{
+    beginResetModel();
+    m_messages.clear();
+    for (const QVariant &v : rows) {
+        const QVariantMap r = v.toMap();
+        m_messages.append(make(r["id"].toString(), r["fromUserId"].toString(),
+                               r["toUserId"].toString(), r["content"].toString(),
+                               r["messageType"].toInt(), r["timestamp"].toString(),
+                               r["status"].toInt(), m_currentUserId));
+    }
+    endResetModel();
+    emit countChanged();
 }
 
 void MessageModel::clear()
@@ -80,15 +121,20 @@ void MessageModel::clear()
     beginResetModel();
     m_messages.clear();
     endResetModel();
+    emit countChanged();
 }
 
-void MessageModel::setCurrentUserId(const QString &userId)
+QString MessageModel::attachmentJson(const QString &name, qint64 size, const QString &path)
 {
-    m_currentUserId = userId;
+    return QString::fromUtf8(QJsonDocument(QJsonObject{{"name", name}, {"size", double(size)},
+                                                       {"path", path}}).toJson(QJsonDocument::Compact));
 }
 
-void MessageModel::loadConversation(const QString &conversationId)
+QString MessageModel::preview(int messageType, const QString &content)
 {
-    // Implementation would load from DatabaseManager
-    Q_UNUSED(conversationId);
+    if (messageType == 0)
+        return content;
+    const QJsonObject o = QJsonDocument::fromJson(content.toUtf8()).object();
+    const QString name = o["name"].toString();
+    return messageType == 1 ? tr("Photo") : (name.isEmpty() ? tr("File") : name);
 }

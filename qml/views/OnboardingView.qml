@@ -1,83 +1,96 @@
 import QtQuick
-import QtQuick.Layouts
 import QtQuick.Controls
-import "../components"
-import "../themes"
+import QtQuick.Layouts
+import LetsChat
 
 Rectangle {
     id: root
     color: Theme.background
-    
-    signal onboardingComplete()
-    
-    ColumnLayout {
-        anchors.centerIn: parent
-        width: Math.min(parent.width * 0.8, 400)
-        spacing: 24
-        
-        Label {
-            text: qsTr("Welcome to LetsChat")
-            font.pixelSize: 32
-            font.bold: true
-            color: Theme.text
-            Layout.alignment: Qt.AlignHCenter
-        }
-        
-        Label {
-            text: qsTr("Chat with people on your local network")
-            font.pixelSize: 16
-            color: Theme.textSecondary
-            Layout.alignment: Qt.AlignHCenter
-            wrapMode: Text.WordWrap
-            Layout.fillWidth: true
-            horizontalAlignment: Text.AlignHCenter
-        }
-        
-        ColumnLayout {
-            spacing: 8
-            Layout.fillWidth: true
-            
-            Label {
-                text: qsTr("Your Device Name")
-                font.pixelSize: 14
-                color: Theme.text
-            }
-            
-            TextField {
-                id: deviceNameField
-                text: deviceInfo.getDeviceName()
-                enabled: false
-                Layout.fillWidth: true
-            }
-        }
-        
-        ColumnLayout {
-            spacing: 8
-            Layout.fillWidth: true
-            
-            Label {
-                text: qsTr("Choose an Alias (optional)")
-                font.pixelSize: 14
-                color: Theme.text
-            }
-            
-            TextField {
-                id: aliasField
-                placeholderText: qsTr("Enter alias or leave empty to use device name")
-                Layout.fillWidth: true
-            }
-        }
-        
-        Button {
-            text: qsTr("Get Started")
-            Layout.fillWidth: true
-            Layout.topMargin: 16
-            
-            onClicked: {
-                if (aliasField.text !== "") {
-                    identityManager.alias = aliasField.text
+
+    Flickable {
+        anchors.fill: parent
+        contentHeight: Math.max(height, card.implicitHeight + 48)
+        boundsBehavior: Flickable.StopAtBounds
+        clip: true
+
+        Rectangle {
+            id: card
+            anchors.centerIn: parent
+            width: Math.min(root.width - 32, 440)
+            implicitHeight: content.implicitHeight + 56
+            height: implicitHeight
+            radius: 20
+            color: Theme.surface
+            border.color: Theme.border
+
+            ColumnLayout {
+                id: content
+                anchors.fill: parent
+                anchors.margins: 28
+                spacing: 18
+
+                Image {
+                    Layout.alignment: Qt.AlignHCenter
+                    source: "qrc:/icons/app.png"
+                    sourceSize: Qt.size(160, 160)
+                    Layout.preferredWidth: 80
+                    Layout.preferredHeight: 80
+                    smooth: true
                 }
-                onboardingComplete()
+
+                Label {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: qsTr("Welcome to LetsChat")
+                    font.pixelSize: 26
+                    font.bold: true
+                    color: Theme.text
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    text: qsTr("Chat with people around you — over your Wi-Fi network or directly via Bluetooth. No internet or accounts needed.")
+                    font.pixelSize: 14
+                    color: Theme.textSecondary
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 6
+                    spacing: 6
+
+                    Label {
+                        text: qsTr("Your name")
+                        font.pixelSize: 13
+                        font.weight: Font.Medium
+                        color: Theme.text
+                    }
+                    TextField {
+                        id: aliasField
+                        Layout.fillWidth: true
+                        placeholderText: Identity.deviceName
+                        maximumLength: 40
+                        onAccepted: start.clicked()
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: qsTr("This is how others see you. Leave empty to use “%1”.").arg(Identity.deviceName)
+                        font.pixelSize: 12
+                        color: Theme.textSecondary
+                    }
+                }
+
+                Button {
+                    id: start
+                    Layout.fillWidth: true
+                    Layout.topMargin: 4
+                    implicitHeight: 48
+                    text: qsTr("Get started")
+                    highlighted: true
+                    onClicked: Identity.completeOnboarding(aliasField.text)
+                }
             }
         }
     }

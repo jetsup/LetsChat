@@ -1,112 +1,233 @@
 import QtQuick
-import QtQuick.Layouts
 import QtQuick.Controls
-import "../themes"
+import QtQuick.Layouts
+import LetsChat
 
-ScrollView {
+Rectangle {
     id: root
-    contentWidth: availableWidth
-    
+    color: Theme.background
+
+    property real topInset: 0
+    property real bottomInset: 0
+    signal closeRequested()
+
+    AliasDialog { id: aliasDialog }
+
+    // a titled card that stacks its children
+    component Card: Rectangle {
+        default property alias content: inner.data
+        property string title
+        Layout.fillWidth: true
+        implicitHeight: inner.implicitHeight + 24 + (titleLabel.visible ? titleLabel.height + 4 : 0)
+        radius: Theme.radius
+        color: Theme.surface
+        border.color: Theme.border
+
+        Label {
+            id: titleLabel
+            visible: parent.title !== ""
+            x: 16; y: 12
+            text: parent.title
+            font.pixelSize: 12
+            font.weight: Font.DemiBold
+            font.capitalization: Font.AllUppercase
+            font.letterSpacing: 0.8
+            color: Theme.textSecondary
+        }
+        ColumnLayout {
+            id: inner
+            x: 16
+            y: 12 + (titleLabel.visible ? titleLabel.height + 4 : 0)
+            width: parent.width - 32
+            spacing: 4
+        }
+    }
+
+    // a label + description with a control on the right
+    component Row2: RowLayout {
+        property string title
+        property string subtitle
+        default property alias control: slot.data
+        Layout.fillWidth: true
+        spacing: 12
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 1
+            Label { text: title; font.pixelSize: 15; color: Theme.text; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Label {
+                visible: subtitle !== ""
+                text: subtitle
+                font.pixelSize: 12
+                color: Theme.textSecondary
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+        }
+        RowLayout { id: slot }
+    }
+
     ColumnLayout {
-        width: root.availableWidth
-        spacing: 16
-        
-        GroupBox {
-            title: qsTr("Appearance")
+        anchors.fill: parent
+        spacing: 0
+
+        Rectangle {
             Layout.fillWidth: true
-            
-            ColumnLayout {
+            Layout.preferredHeight: Theme.headerHeight + root.topInset
+            color: Theme.surface
+            RowLayout {
                 anchors.fill: parent
-                
-                RowLayout {
-                    Layout.fillWidth: true
-                    
-                    Label {
-                        text: qsTr("Theme")
+                anchors.topMargin: root.topInset
+                anchors.leftMargin: 4
+                spacing: 4
+                IconButton { iconName: "back"; onClicked: root.closeRequested() }
+                Label {
+                    text: qsTr("Settings")
+                    font.pixelSize: 20
+                    font.bold: true
+                    color: Theme.text
+                }
+            }
+            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
+        }
+
+        Flickable {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            contentWidth: width
+            contentHeight: page.implicitHeight + 32 + root.bottomInset
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar {}
+
+            ColumnLayout {
+                id: page
+                x: Math.max(Theme.pageMargin, (parent.width - 640) / 2)
+                y: 16
+                width: Math.min(parent.width - 2 * Theme.pageMargin, 640)
+                spacing: 14
+
+                // ---------------------------------------------------------------- profile
+                Card {
+                    title: qsTr("Profile")
+                    RowLayout {
                         Layout.fillWidth: true
-                    }
-                    
-                    ComboBox {
-                        model: ["System", "Light", "Dark"]
-                        currentIndex: {
-                            if (themeManager.theme === "system") return 0
-                            if (themeManager.theme === "light") return 1
-                            return 2
+                        spacing: 14
+                        Avatar { name: Identity.alias; seed: Identity.userId; size: 56 }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 1
+                            Label { text: Identity.alias; font.pixelSize: 18; font.weight: Font.DemiBold; color: Theme.text }
+                            Label { text: Identity.deviceName; font.pixelSize: 12; color: Theme.textSecondary }
+                            Label {
+                                text: qsTr("ID %1").arg(Identity.userId.substring(0, 8))
+                                font.pixelSize: 11
+                                color: Theme.textSecondary
+                            }
                         }
-                        onCurrentTextChanged: {
-                            if (currentText === "System") themeManager.theme = "system"
-                            else if (currentText === "Light") themeManager.theme = "light"
-                            else themeManager.theme = "dark"
+                        Button { text: qsTr("Edit"); flat: true; onClicked: aliasDialog.open() }
+                    }
+                }
+
+                // ---------------------------------------------------------------- appearance
+                Card {
+                    title: qsTr("Appearance")
+                    Row2 {
+                        title: qsTr("Theme")
+                        ComboBox {
+                            id: themeBox
+                            model: [qsTr("System"), qsTr("Light"), qsTr("Dark")]
+                            readonly property var keys: ["system", "light", "dark"]
+                            currentIndex: Math.max(0, keys.indexOf(ThemeManager.theme))
+                            onActivated: ThemeManager.theme = keys[currentIndex]
+                            implicitWidth: 130
                         }
                     }
                 }
-            }
-        }
-        
-        GroupBox {
-            title: qsTr("Notifications")
-            Layout.fillWidth: true
-            
-            ColumnLayout {
-                anchors.fill: parent
-                
-                Switch {
-                    text: qsTr("Enable Notifications")
-                    checked: notificationManager.enabled
-                    onToggled: notificationManager.enabled = checked
-                }
-            }
-        }
-        
-        GroupBox {
-            title: qsTr("Network")
-            Layout.fillWidth: true
-            
-            ColumnLayout {
-                anchors.fill: parent
-                
-                Switch {
-                    text: qsTr("Run in Background")
-                    checked: settingsManager.startInBackground
-                    onToggled: settingsManager.startInBackground = checked
-                }
-            }
-        }
-        
-        GroupBox {
-            title: qsTr("Identity")
-            Layout.fillWidth: true
-            
-            ColumnLayout {
-                anchors.fill: parent
-                
-                RowLayout {
-                    Layout.fillWidth: true
-                    
-                    Label {
-                        text: qsTr("Your ID:")
-                        Layout.fillWidth: true
+
+                // ---------------------------------------------------------------- background + notifications
+                Card {
+                    title: qsTr("Background & notifications")
+                    Row2 {
+                        title: qsTr("Keep running in background")
+                        subtitle: Device.isAndroid
+                                  ? qsTr("Shows a small status notification and keeps receiving messages while the app is closed.")
+                                  : (Background.trayAvailable
+                                     ? qsTr("Closing the window keeps LetsChat in the system tray.")
+                                     : qsTr("No system tray found on this desktop; the window will close normally."))
+                        Switch {
+                            checked: Background.runInBackground
+                            onToggled: Background.runInBackground = checked
+                        }
                     }
-                    
-                    Label {
-                        text: identityManager.userId.substring(0, 8) + "..."
-                        elide: Text.ElideRight
+                    Row2 {
+                        title: qsTr("Message notifications")
+                        Switch {
+                            checked: Notifier.enabled
+                            onToggled: Notifier.enabled = checked
+                        }
+                    }
+                    Row2 {
+                        visible: Device.isAndroid && Background.runInBackground
+                        title: qsTr("Unrestricted battery use")
+                        subtitle: Background.batteryUnrestricted
+                                  ? qsTr("Allowed — Android will not pause LetsChat while the screen is off.")
+                                  : qsTr("Recommended so Android does not pause the connection when the screen is off.")
+                        Button {
+                            visible: !Background.batteryUnrestricted
+                            text: qsTr("Allow")
+                            flat: true
+                            onClicked: Background.requestBatteryExemption()
+                        }
                     }
                 }
-                
-                RowLayout {
-                    Layout.fillWidth: true
-                    
-                    Label {
-                        text: qsTr("Alias:")
-                        Layout.fillWidth: true
+
+                // ---------------------------------------------------------------- bluetooth
+                Card {
+                    title: qsTr("Bluetooth")
+                    Row2 {
+                        title: qsTr("Bluetooth messaging")
+                        subtitle: Bluetooth.statusText !== "" ? Bluetooth.statusText
+                                  : (!Bluetooth.available ? qsTr("No Bluetooth adapter on this device")
+                                     : Bluetooth.listening ? qsTr("Ready — nearby devices can connect")
+                                     : qsTr("Off"))
+                        Switch {
+                            enabled: Bluetooth.available
+                            checked: Bluetooth.enabled
+                            onToggled: Bluetooth.enabled = checked
+                        }
                     }
-                    
-                    Label {
-                        text: identityManager.alias
+                }
+
+                // ---------------------------------------------------------------- network
+                Card {
+                    title: qsTr("Network")
+                    Row2 {
+                        title: qsTr("This device")
+                        subtitle: Chat.lanConnected ? Chat.localIp : qsTr("Not connected")
+                    }
+                    Row2 {
+                        title: qsTr("Ports")
+                        subtitle: qsTr("UDP %1 (discovery), TCP %2 (messages)")
+                                  .arg(45454).arg(45455)
+                    }
+                }
+
+                // ---------------------------------------------------------------- about
+                Card {
+                    title: qsTr("About")
+                    Row2 {
+                        title: AppConfig.appName
+                        subtitle: qsTr("Version %1 · local-network messenger").arg(AppConfig.appVersion)
+                    }
+                    Button {
+                        visible: !Device.isAndroid
+                        text: qsTr("Quit LetsChat")
+                        flat: true
+                        onClicked: Background.quit()
                     }
                 }
             }
         }
     }
+
 }

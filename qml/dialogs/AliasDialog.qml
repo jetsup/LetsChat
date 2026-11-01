@@ -1,37 +1,38 @@
 import QtQuick
-import QtQuick.Layouts
 import QtQuick.Controls
-import "../themes"
+import QtQuick.Layouts
+import LetsChat
 
 Dialog {
     id: root
-    title: qsTr("Change Alias")
+    title: qsTr("Change your name")
     modal: true
-    anchors.centerIn: parent
-    width: Math.min(parent.width * 0.9, 350)
-    
+    anchors.centerIn: Overlay.overlay
+    width: Math.min(Overlay.overlay ? Overlay.overlay.width - 32 : 360, 380)
+    standardButtons: Dialog.Ok | Dialog.Cancel
+
+    onAboutToShow: {
+        field.text = Identity.alias
+        field.selectAll()
+        field.forceActiveFocus()
+    }
+    onAccepted: Identity.alias = field.text
+
     ColumnLayout {
         anchors.fill: parent
-        spacing: 12
-        
+        spacing: 10
         Label {
-            text: qsTr("Enter a new alias for this device")
-            color: Theme.text
+            Layout.fillWidth: true
             wrapMode: Text.WordWrap
-            Layout.fillWidth: true
+            text: qsTr("Others see this name next to your messages.")
+            color: Theme.textSecondary
         }
-        
         TextField {
-            id: aliasInput
-            text: identityManager.alias
-            placeholderText: qsTr("Alias")
+            id: field
             Layout.fillWidth: true
+            maximumLength: 40
+            placeholderText: Identity.deviceName
+            onAccepted: root.accept()
         }
-    }
-    
-    standardButtons: Dialog.Ok | Dialog.Cancel
-    
-    onAccepted: {
-        identityManager.alias = aliasInput.text
     }
 }

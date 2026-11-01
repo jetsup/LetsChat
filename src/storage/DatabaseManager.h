@@ -4,47 +4,48 @@
 #include <QObject>
 #include <QSqlDatabase>
 #include <QString>
+#include <QVariantList>
+#include <QVariantMap>
 
+/** SQLite persistence for peers and chat history (message bodies are encrypted at rest). */
 class DatabaseManager : public QObject
 {
     Q_OBJECT
 
 public:
     explicit DatabaseManager(QObject *parent = nullptr);
-    ~DatabaseManager();
-    
+    ~DatabaseManager() override;
+
     bool initialize();
     void close();
-    
-    // Messages
-    Q_INVOKABLE bool saveMessage(const QString &messageId, const QString &fromUserId, 
-                                const QString &toUserId, const QString &content, 
-                                int messageType, const QString &timestamp);
-    Q_INVOKABLE QVariantList getMessages(const QString &conversationId, int limit = 50);
-    Q_INVOKABLE bool deleteMessage(const QString &messageId);
-    
+
+    static QString conversationId(const QString &userA, const QString &userB);
+
+    // Messages. status: 0 = sending, 1 = sent / received, 2 = failed
+    bool saveMessage(const QString &messageId, const QString &fromUserId, const QString &toUserId,
+                     const QString &content, int messageType, const QString &timestamp, int status = 1);
+    bool messageExists(const QString &messageId);
+    bool updateMessageStatus(const QString &messageId, int status);
+    QVariantList getMessages(const QString &conversationId, int limit = 200);
+    QVariantMap lastMessage(const QString &conversationId);
+
     // Peers
-    Q_INVOKABLE bool savePeer(const QString &userId, const QString &alias, 
-                             const QString &deviceName, const QString &ipAddress,
-                             bool isOnline);
-    Q_INVOKABLE QVariantList getPeers();
-    Q_INVOKABLE bool updatePeerStatus(const QString &userId, bool isOnline);
-    Q_INVOKABLE bool markAllPeersOffline();
-    
-    // Settings/Encrypted storage
-    Q_INVOKABLE bool saveEncryptedData(const QString &key, const QString &data);
-    Q_INVOKABLE QString loadEncryptedData(const QString &key);
-    
+    bool savePeer(const QString &userId, const QString &alias, const QString &deviceName,
+                  const QString &ipAddress, const QString &btAddress);
+    QVariantList getPeers();
+
 signals:
-    void databaseReady();
     void error(const QString &message);
-    
+
 private:
     bool createTables();
-    QString getDatabasePath() const;
-    
+    bool columnExists(const QString &table, const QString &column);
+    QString encode(const QString &text) const;
+    QString decode(const QString &stored) const;
+    QString databasePath() const;
+
     QSqlDatabase m_db;
-    QString m_encryptionKey;
+    QByteArray m_key;
 };
 
 #endif // DATABASEMANAGER_H

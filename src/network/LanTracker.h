@@ -2,38 +2,33 @@
 #define LANTRACKER_H
 
 #include <QObject>
-#include <QNetworkAccessManager>
 #include <QString>
 #include <QTimer>
 
+/** Watches the local IPv4 network and tells us when we join a different LAN. */
 class LanTracker : public QObject
 {
     Q_OBJECT
-    Q_PROPERTY(QString currentNetworkId READ currentNetworkId NOTIFY networkChanged)
+    Q_PROPERTY(QString localIp READ localIp NOTIFY networkChanged)
     Q_PROPERTY(bool isConnected READ isConnected NOTIFY networkChanged)
 
 public:
     explicit LanTracker(QObject *parent = nullptr);
-    
-    QString currentNetworkId() const;
-    bool isConnected() const;
-    
-    Q_INVOKABLE void monitorNetwork();
-    
+
+    QString localIp() const { return m_localIp; }
+    bool isConnected() const { return !m_localIp.isEmpty(); }
+    void start();
+
 signals:
-    void networkChanged(const QString &newNetworkId);
+    void networkChanged();
     void joinedNewLan(const QString &networkId);
-    
-private slots:
-    void checkNetwork();
-    
+
 private:
-    QString generateNetworkId() const;
-    
-    QTimer *m_checkTimer;
-    QString m_currentNetworkId;
-    QString m_lastNetworkId;
-    bool m_isConnected;
+    void check();
+
+    QTimer *m_timer;
+    QString m_localIp;
+    QString m_networkId;
 };
 
 #endif // LANTRACKER_H

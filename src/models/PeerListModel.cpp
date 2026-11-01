@@ -1,148 +1,184 @@
 #include "PeerListModel.h"
-#include "storage/DatabaseManager.h"
-#include <QDebug>
 
-PeerListModel::PeerListModel(QObject *parent)
-    : QAbstractListModel(parent)
-{
-}
+PeerListModel::PeerListModel(QObject *parent) : QAbstractListModel(parent) {}
 
 int PeerListModel::rowCount(const QModelIndex &parent) const
 {
-    if (parent.isValid())
-        return 0;
-    return m_peers.count();
+    return parent.isValid() ? 0 : int(m_peers.size());
 }
 
 QVariant PeerListModel::data(const QModelIndex &index, int role) const
 {
     if (!index.isValid() || index.row() >= m_peers.size())
-        return QVariant();
-    
-    const Peer &peer = m_peers[index.row()];
-    
+        return {};
+    const Peer &p = m_peers.at(index.row());
     switch (role) {
-    case UserIdRole:
-        return peer.userId;
-    case AliasRole:
-        return peer.alias;
-    case DeviceNameRole:
-        return peer.deviceName;
-    case IpAddressRole:
-        return peer.ipAddress;
-    case IsOnlineRole:
-        return peer.isOnline;
-    case LastSeenRole:
-        return peer.lastSeen;
-    case DisplayNameRole:
-        return peer.alias.isEmpty() ? peer.deviceName : peer.alias;
-    default:
-        return QVariant();
+    case UserIdRole: return p.userId;
+    case AliasRole: return p.alias;
+    case DeviceNameRole: return p.deviceName;
+    case DisplayNameRole: return p.displayName();
+    case IpAddressRole: return p.ipAddress;
+    case BtAddressRole: return p.btAddress;
+    case IsOnlineRole: return p.isOnline();
+    case TransportRole: return p.transport();
+    case LanOnlineRole: return p.lanOnline;
+    case BtOnlineRole: return p.btOnline;
+    case LastMessageRole: return p.lastMessage;
+    case LastActivityRole: return p.lastActivity;
+    case UnreadRole: return p.unread;
+    // online peers first, then most recent activity, then name
+    case SortKeyRole:
+        return QString(p.isOnline() ? "1" : "0") + p.lastActivity.rightJustified(25, '0')
+               + p.displayName().toLower();
+    default: return {};
     }
 }
 
 QHash<int, QByteArray> PeerListModel::roleNames() const
 {
-    QHash<int, QByteArray> roles;
-    roles[UserIdRole] = "userId";
-    roles[AliasRole] = "alias";
-    roles[DeviceNameRole] = "deviceName";
-    roles[IpAddressRole] = "ipAddress";
-    roles[IsOnlineRole] = "isOnline";
-    roles[LastSeenRole] = "lastSeen";
-    roles[DisplayNameRole] = "displayName";
-    return roles;
+    return {
+        {UserIdRole, "userId"},       {AliasRole, "alias"},
+        {DeviceNameRole, "deviceName"}, {DisplayNameRole, "displayName"},
+        {IpAddressRole, "ipAddress"}, {BtAddressRole, "btAddress"},
+        {IsOnlineRole, "isOnline"},   {TransportRole, "transport"},
+        {LanOnlineRole, "lanOnline"}, {BtOnlineRole, "btOnline"},
+        {LastMessageRole, "lastMessage"}, {LastActivityRole, "lastActivity"},
+        {UnreadRole, "unread"},       {SortKeyRole, "sortKey"},
+    };
 }
 
-void PeerListModel::addOrUpdatePeer(const QString &userId, const QString &alias,
-                                   const QString &deviceName, const QString &ipAddress,
-                                   bool isOnline)
+int PeerListModel::onlineCount() const
 {
-    int index = getPeerIndex(userId);
-    if (index >= 0) {
-        // Update existing peer
-        m_peers[index].alias = alias;
-        m_peers[index].deviceName = deviceName;
-        m_peers[index].ipAddress = ipAddress;
-        m_peers[index].isOnline = isOnline;
-        emit dataChanged(this->index(index), this->index(index));
-    } else {
-        // Add new peer
-        beginInsertRows(QModelIndex(), m_peers.count(), m_peers.count());
-        Peer peer;
-        peer.userId = userId;
-        peer.alias = alias;
-        peer.deviceName = deviceName;
-        peer.ipAddress = ipAddress;
-        peer.isOnline = isOnline;
-        m_peers.append(peer);
-        endInsertRows();
-    }
+    int n = 0;
+    for (const Peer &p : m_peers)
+        n += p.isOnline() ? 1 : 0;
+    return n;
 }
 
-void PeerListModel::removePeer(const QString &userId)
+int PeerListModel::indexOf(const QString &userId) const
 {
-    int index = getPeerIndex(userId);
-    if (index >= 0) {
-        beginRemoveRows(QModelIndex(), index, index);
-        m_peers.removeAt(index);
-        endRemoveRows();
-    }
-}
-
-void PeerListModel::markAllOffline()
-{
-    for (int i = 0; i < m_peers.size(); ++i) {
-        if (m_peers[i].isOnline) {
-            m_peers[i].isOnline = false;
-            emit dataChanged(this->index(i), this->index(i), {IsOnlineRole});
-        }
-    }
-}
-
-void PeerListModel::markPeerOffline(const QString &userId)
-{
-    int index = getPeerIndex(userId);
-    if (index >= 0 && m_peers[index].isOnline) {
-        m_peers[index].isOnline = false;
-        emit dataChanged(this->index(index), this->index(index), {IsOnlineRole});
-    }
-}
-
-void PeerListModel::clear()
-{
-    beginResetModel();
-    m_peers.clear();
-    endResetModel();
-}
-
-QVariantMap PeerListModel::getPeer(int index) const
-{
-    QVariantMap result;
-    if (index >= 0 && index < m_peers.size()) {
-        const Peer &peer = m_peers[index];
-        result["userId"] = peer.userId;
-        result["alias"] = peer.alias;
-        result["deviceName"] = peer.deviceName;
-        result["ipAddress"] = peer.ipAddress;
-        result["isOnline"] = peer.isOnline;
-        result["displayName"] = peer.alias.isEmpty() ? peer.deviceName : peer.alias;
-    }
-    return result;
-}
-
-int PeerListModel::getPeerIndex(const QString &userId) const
-{
-    for (int i = 0; i < m_peers.size(); ++i) {
-        if (m_peers[i].userId == userId) {
+    for (int i = 0; i < m_peers.size(); ++i)
+        if (m_peers.at(i).userId == userId)
             return i;
-        }
-    }
     return -1;
 }
 
-void PeerListModel::loadFromDatabase()
+const Peer *PeerListModel::find(const QString &userId) const
 {
-    // This would load from DatabaseManager
-    // Implementation would need access to DB instance
+    const int i = indexOf(userId);
+    return i < 0 ? nullptr : &m_peers.at(i);
+}
+
+Peer &PeerListModel::ensure(const QString &userId, bool *created)
+{
+    int i = indexOf(userId);
+    if (i < 0) {
+        beginInsertRows({}, int(m_peers.size()), int(m_peers.size()));
+        Peer p;
+        p.userId = userId;
+        m_peers.append(p);
+        endInsertRows();
+        i = int(m_peers.size()) - 1;
+        if (created) *created = true;
+    }
+    return m_peers[i];
+}
+
+void PeerListModel::touch(int row, const QList<int> &roles)
+{
+    emit dataChanged(index(row), index(row), roles);
+    const int online = onlineCount();
+    if (online != m_lastOnline) {
+        m_lastOnline = online;
+        emit onlineCountChanged();
+    }
+}
+
+void PeerListModel::upsertLan(const QString &userId, const QString &alias, const QString &deviceName,
+                              const QString &ip)
+{
+    Peer &p = ensure(userId);
+    p.alias = alias;
+    p.deviceName = deviceName;
+    p.ipAddress = ip;
+    p.lanOnline = true;
+    touch(indexOf(userId));
+}
+
+void PeerListModel::upsertBluetooth(const QString &userId, const QString &alias,
+                                    const QString &deviceName, const QString &btAddress)
+{
+    Peer &p = ensure(userId);
+    p.alias = alias;
+    if (!deviceName.isEmpty()) p.deviceName = deviceName;
+    p.btAddress = btAddress;
+    p.btOnline = true;
+    touch(indexOf(userId));
+}
+
+void PeerListModel::loadKnown(const QString &userId, const QString &alias, const QString &deviceName,
+                              const QString &ip, const QString &bt, const QString &lastSeen)
+{
+    Peer &p = ensure(userId);
+    p.alias = alias;
+    p.deviceName = deviceName;
+    p.ipAddress = ip;
+    p.btAddress = bt;
+    if (p.lastActivity.isEmpty())
+        p.lastActivity = lastSeen;
+    touch(indexOf(userId));
+}
+
+void PeerListModel::setLanOffline(const QString &userId)
+{
+    const int i = indexOf(userId);
+    if (i >= 0 && m_peers[i].lanOnline) {
+        m_peers[i].lanOnline = false;
+        touch(i);
+    }
+}
+
+void PeerListModel::setBluetoothOffline(const QString &userId)
+{
+    const int i = indexOf(userId);
+    if (i >= 0 && m_peers[i].btOnline) {
+        m_peers[i].btOnline = false;
+        touch(i);
+    }
+}
+
+void PeerListModel::markAllLanOffline()
+{
+    for (int i = 0; i < m_peers.size(); ++i) {
+        if (m_peers[i].lanOnline) {
+            m_peers[i].lanOnline = false;
+            touch(i);
+        }
+    }
+}
+
+void PeerListModel::setLastMessage(const QString &userId, const QString &text, const QString &timestamp)
+{
+    const int i = indexOf(userId);
+    if (i < 0) return;
+    m_peers[i].lastMessage = text;
+    m_peers[i].lastActivity = timestamp;
+    touch(i);
+}
+
+void PeerListModel::incrementUnread(const QString &userId)
+{
+    const int i = indexOf(userId);
+    if (i < 0) return;
+    ++m_peers[i].unread;
+    touch(i);
+}
+
+void PeerListModel::clearUnread(const QString &userId)
+{
+    const int i = indexOf(userId);
+    if (i >= 0 && m_peers[i].unread != 0) {
+        m_peers[i].unread = 0;
+        touch(i);
+    }
 }
