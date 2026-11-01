@@ -16,8 +16,13 @@ struct Message
     QDateTime timestamp;
     bool isOwnMessage = false;
     int status = 1;           // 0: sending, 1: sent/received, 2: failed, 3: queued
-    // for messageType 1 (image), 2 (file) and 3 (voice note) `content` is {"name","size","path"} JSON
+    // type 0 text, 1 image, 2 file, 3 voice note, 4 deleted placeholder; for 1-3 `content` is
+    // {"name","size","path"} JSON `content` is {"name","size","path"} JSON
     QString attachmentName, attachmentPath, caption;
+    // quoted message (reply): empty replyId = not a reply
+    QString replyId, replyText;
+    bool replyFromMe = false;
+    int replyType = 0;
     int durationMs = 0;
     qint64 attachmentSize = 0;
 };
@@ -45,7 +50,11 @@ public:
         AttachmentSizeRole,
         CaptionRole,
         DurationRole,
-        DurationTextRole
+        DurationTextRole,
+        ReplyIdRole,
+        ReplyTextRole,
+        ReplyFromMeRole,
+        ReplyTypeRole
     };
 
     explicit MessageModel(QObject *parent = nullptr);
@@ -56,9 +65,14 @@ public:
 
     void setCurrentUserId(const QString &userId) { m_currentUserId = userId; }
     void addMessage(const QString &messageId, const QString &fromUserId, const QString &toUserId,
-                    const QString &content, int messageType, const QString &timestamp, int status = 1);
+                    const QString &content, int messageType, const QString &timestamp, int status = 1,
+                    const QString &replyJson = {});
     void setStatus(const QString &messageId, int status);
     void removeMessage(const QString &messageId);
+    /** Turns a message into the "deleted" placeholder (type 4). */
+    void markDeleted(const QString &messageId);
+    int rowOf(const QString &messageId) const;
+    static QString replyJsonFor(const QString &id, const QString &fromUserId, const QString &text, int type);
     /** Rows whose text, caption or file name contains `query` (case-insensitive), oldest first. */
     QVariantList search(const QString &query) const;
     void setMessages(const QVariantList &rows);   // replaces the whole conversation
@@ -75,7 +89,7 @@ signals:
 private:
     static Message make(const QString &id, const QString &from, const QString &to,
                         const QString &content, int type, const QString &timestamp, int status,
-                        const QString &me);
+                        const QString &me, const QString &replyJson);
 
     QList<Message> m_messages;
     QString m_currentUserId;

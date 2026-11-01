@@ -41,6 +41,11 @@ ApplicationWindow {
     Connections {
         target: Background
         function onBackRequested() { window.handleBack() }
+        // a notification was tapped: leave any page and show that conversation
+        function onOpenChatRequested(peerId) {
+            window.overlay = ""
+            Chat.selectPeer(peerId)
+        }
     }
 
     function handleBack() {

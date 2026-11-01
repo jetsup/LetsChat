@@ -61,7 +61,8 @@ public:
 
     bool isLinked(const QString &userId) const { return m_byUser.contains(userId); }
     bool sendText(const QString &userId, const QString &messageId, const QString &fromUserId,
-                  const QString &alias, const QString &content, const QString &timestamp);
+                  const QString &alias, const QString &content, const QString &timestamp,
+                  const QString &replyJson = {});
 
     /** Streams a file over the link; completion is reported through sendFinished(). */
     /** Asks the peer for its profile picture / tells it to delete one of our messages. */
@@ -70,7 +71,8 @@ public:
     bool sendFile(const QString &userId, const QString &messageId, const QString &fromUserId,
                   const QString &alias, const QString &kind, const QString &filePath,
                   const QString &fileName, qint64 size, const QString &timestamp,
-                  const QString &caption = {}, int durationMs = 0);
+                  const QString &caption = {}, int durationMs = 0,
+                  const QString &replyJson = {});
 
 signals:
     void sendFinished(const QString &messageId, bool ok);
@@ -84,7 +86,7 @@ signals:
     void avatarReceived(const QString &peerUserId, const QString &path, const QString &hash);
     void peerDown(const QString &userId);
     void textReceived(const QString &fromUserId, const QString &alias, const QString &messageId,
-                      const QString &content, const QString &timestamp);
+                      const QString &content, const QString &timestamp, const QString &replyJson);
 
 private:
     struct Link {

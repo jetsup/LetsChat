@@ -21,14 +21,62 @@ Rectangle {
     readonly property bool typing: input.text !== ""
     // anything Back / Esc should close before leaving the chat itself
     readonly property bool dialogOpen: photoDialog.opened || voiceDialog.opened || viewer.opened
-                                       || deleteChatDialog.opened || searchOpen
+                                       || deleteChatDialog.opened || actionSheet.opened || forwardSheet.opened
+                                       || searchOpen || Chat.replyActive
 
     function closeDialogs() {
         if (viewer.opened) viewer.close()
         else if (photoDialog.opened) { Media.discardFile(photoDialog.source); photoDialog.close() }
         else if (voiceDialog.opened) { Media.discardFile(voiceDialog.source); voiceDialog.close() }
         else if (deleteChatDialog.opened) deleteChatDialog.close()
+        else if (forwardSheet.opened) forwardSheet.close()
+        else if (actionSheet.opened) actionSheet.close()
         else if (searchOpen) closeSearch()
+        else if (Chat.replyActive) Chat.clearReply()
+    }
+
+    // After any popup closes Qt hands the focus back to the message field, which makes the on-screen
+    // keyboard pop up. Park the focus on the page instead (phones); desktop gets the field back.
+    Timer {
+        id: hideKeyboardAgain
+        interval: 120
+        repeat: true
+        property int left: 0
+        // Android re-opens the keyboard a moment after the popup closed; keep hiding it briefly.
+        onTriggered: {
+            if (input.activeFocus) { stop(); return }
+            Qt.inputMethod.hide()
+            if (--left <= 0) stop()
+        }
+    }
+    function afterPopup() {
+        if (Device.isAndroid) {
+            input.focus = false
+            root.forceActiveFocus()
+            Qt.inputMethod.hide()
+            hideKeyboardAgain.left = 5
+            hideKeyboardAgain.restart()
+        } else {
+            input.forceActiveFocus()
+        }
+    }
+
+    // jump to a quoted message and flash it
+    property int flashRow: -1
+    Timer { id: flashTimer; interval: 1600; onTriggered: root.flashRow = -1 }
+    function jumpTo(messageId) {
+        var row = Chat.rowOf(messageId)
+        if (row < 0) {
+            Chat.notice(qsTr("The original message is no longer available"))
+            return
+        }
+        list.positionViewAtIndex(row, ListView.Center)
+        root.flashRow = row
+        flashTimer.restart()
+    }
+    function startReply(messageId) {
+        Chat.setReply(messageId)
+        input.forceActiveFocus()
     }
 
     // ---- who we are talking to (nickname / picture / state), refreshed on changes
@@ -250,14 +298,18 @@ Rectangle {
                 playProgress: root.currentVoice === messageId && voicePlayer.duration > 0
                               ? voicePlayer.position / voicePlayer.duration : 0
                 searchMatch: root.matchSet[index] === true
-                searchCurrent: index === root.currentRow
+                searchCurrent: index === root.currentRow || index === root.flashRow
+                onReplyRequested: (id) => root.startReply(id)
+                onQuoteClicked: (id) => root.jumpTo(id)
                 onImageClicked: (source) => { viewer.source = source; viewer.open() }
                 onVoiceToggled: (id, source) => root.toggleVoice(id, source)
-                onContextRequested: (id, own, text) => {
-                    messageMenu.messageId = id
-                    messageMenu.own = own
-                    messageMenu.text = text
-                    messageMenu.popup()
+                onContextRequested: (id, own, text, deleted) => {
+                    Qt.inputMethod.hide()
+                    actionSheet.messageId = id
+                    actionSheet.own = own
+                    actionSheet.text = text
+                    actionSheet.deleted = deleted
+                    actionSheet.open()
                 }
             }
 
@@ -286,6 +338,43 @@ Rectangle {
                 text: qsTr("%1 is offline. Messages are sent when they are back").arg(Chat.currentPeerName)
                 font.pixelSize: 12
                 color: Theme.text
+            }
+        }
+
+        // ---- "replying to ..." bar
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: Chat.replyActive ? 58 : 0
+            visible: Chat.replyActive
+            color: Theme.surface
+            Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: Theme.border }
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Theme.pageMargin
+                anchors.rightMargin: 4
+                spacing: 10
+                Rectangle { Layout.preferredWidth: 4; Layout.fillHeight: true; Layout.topMargin: 10; Layout.bottomMargin: 10; radius: 2; color: Theme.accent }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 0
+                    Label {
+                        Layout.fillWidth: true
+                        text: Chat.replyName === qsTr("You") ? qsTr("Replying to yourself") : qsTr("Replying to %1").arg(Chat.replyName)
+                        font.pixelSize: 12
+                        font.weight: Font.DemiBold
+                        color: Theme.accent
+                        elide: Text.ElideRight
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        text: Chat.replyText
+                        font.pixelSize: 13
+                        color: Theme.textSecondary
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
+                    }
+                }
+                IconButton { iconName: "close"; iconColor: Theme.textSecondary; onClicked: Chat.clearReply() }
             }
         }
 
@@ -485,9 +574,19 @@ Rectangle {
         picker.open()
     }
 
+    Connections {
+        target: photoDialog
+        function onClosed() { root.afterPopup() }
+    }
+
     PhotoDialog {
         id: photoDialog
         onSendRequested: (source, caption) => Chat.sendAttachment(source, caption)
+    }
+
+    Connections {
+        target: voiceDialog
+        function onClosed() { root.afterPopup() }
     }
 
     VoiceDialog {
@@ -556,6 +655,7 @@ Rectangle {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         padding: 0
         onOpened: forceActiveFocus()
+        onClosed: root.afterPopup()
         background: Rectangle { color: "#E6000000" }
         Image {
             id: big
@@ -578,30 +678,184 @@ Rectangle {
 
     // ------------------------------------------------------------------ message menu / delete chat
 
-    Menu {
-        id: messageMenu
+    // ---- message actions: a sheet at the bottom of the screen on phones, a card in the middle on desktop
+    component SheetRow: ItemDelegate {
+        property string iconName
+        property color tint: Theme.text
+        Layout.fillWidth: true
+        implicitHeight: 52
+        padding: 0
+        contentItem: RowLayout {
+            spacing: 16
+            Icon { Layout.leftMargin: 20; name: parent.parent.iconName; size: 22; color: parent.parent.tint }
+            Label {
+                Layout.fillWidth: true
+                text: parent.parent.text
+                font.pixelSize: 16
+                color: parent.parent.tint
+            }
+        }
+        background: Rectangle { color: parent.down ? Theme.pressed : parent.hovered ? Theme.hover : "transparent" }
+    }
+
+    Popup {
+        id: actionSheet
         property string messageId
         property bool own
+        property bool deleted
         property string text
+        readonly property bool phone: Device.isAndroid || root.width < 600
+
+        // Parented to the chat page (not the full-screen overlay) so the sheet ends above the
+        // system navigation bar instead of sliding underneath it.
+        parent: root
+        modal: true
+        focus: true
+        padding: 0
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        width: phone ? root.width : 320
+        x: (root.width - width) / 2
+        y: phone ? root.height - height : Math.max(60, (root.height - height) / 3)
+        onOpened: forceActiveFocus()
+        onClosed: root.afterPopup()
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 120 } }
+
         background: Rectangle {
-            implicitWidth: 220
-            radius: 12
-            color: Theme.surfaceAlt
+            color: Theme.surface
+            radius: Theme.radius
+            // square off the bottom corners of the phone sheet
+            Rectangle { visible: actionSheet.phone; anchors.bottom: parent.bottom; width: parent.width; height: parent.radius; color: parent.color }
             border.color: Theme.border
         }
-        MenuItem {
-            text: qsTr("Copy")
-            enabled: messageMenu.text !== ""
-            height: enabled ? implicitHeight : 0
-            visible: enabled
-            onTriggered: Chat.copyText(messageMenu.text)
+
+        ColumnLayout {
+            width: parent.width
+            spacing: 0
+            Item { Layout.preferredHeight: 8 }
+            SheetRow {
+                text: qsTr("Reply"); iconName: "reply"
+                visible: !actionSheet.deleted
+                Layout.preferredHeight: visible ? 52 : 0
+                onClicked: { actionSheet.close(); root.startReply(actionSheet.messageId) }
+            }
+            SheetRow {
+                text: qsTr("Forward"); iconName: "forward"
+                visible: !actionSheet.deleted
+                Layout.preferredHeight: visible ? 52 : 0
+                onClicked: { actionSheet.close(); forwardSheet.messageId = actionSheet.messageId; forwardSheet.open() }
+            }
+            SheetRow {
+                text: qsTr("Copy"); iconName: "copy"
+                visible: actionSheet.text !== ""
+                Layout.preferredHeight: visible ? 52 : 0
+                onClicked: { actionSheet.close(); Chat.copyText(actionSheet.text) }
+            }
+            SheetRow {
+                text: qsTr("Delete for me"); iconName: "delete"
+                onClicked: { actionSheet.close(); Chat.deleteMessage(actionSheet.messageId, false) }
+            }
+            SheetRow {
+                text: qsTr("Delete for everyone"); iconName: "delete"; tint: Theme.error
+                visible: actionSheet.own && !actionSheet.deleted
+                Layout.preferredHeight: visible ? 52 : 0
+                onClicked: { actionSheet.close(); Chat.deleteMessage(actionSheet.messageId, true) }
+            }
+            Item { Layout.preferredHeight: 8 }
         }
-        MenuItem { text: qsTr("Delete for me"); onTriggered: Chat.deleteMessage(messageMenu.messageId, false) }
-        MenuItem {
-            text: qsTr("Delete for everyone")
-            visible: messageMenu.own
-            height: visible ? implicitHeight : 0
-            onTriggered: Chat.deleteMessage(messageMenu.messageId, true)
+    }
+
+    // ---- forward picker
+    Popup {
+        id: forwardSheet
+        property string messageId
+        property string query: ""
+        readonly property bool phone: Device.isAndroid || root.width < 600
+
+        parent: root
+        modal: true
+        focus: true
+        padding: 0
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        width: phone ? root.width : 380
+        height: phone ? root.height * 0.72 : Math.min(root.height - 120, 560)
+        x: (root.width - width) / 2
+        y: phone ? root.height - height : (root.height - height) / 2
+        onAboutToShow: { query = ""; searchBox.text = ""; Qt.inputMethod.hide() }
+        onOpened: forceActiveFocus()
+        onClosed: root.afterPopup()
+
+        background: Rectangle { color: Theme.surface; radius: Theme.radius; border.color: Theme.border
+            Rectangle { visible: forwardSheet.phone; anchors.bottom: parent.bottom; width: parent.width; height: parent.radius; color: parent.color } }
+
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 0
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 56
+                Label {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 20
+                    text: qsTr("Forward to…")
+                    font.pixelSize: 18
+                    font.weight: Font.DemiBold
+                    color: Theme.text
+                }
+                IconButton { iconName: "close"; iconColor: Theme.textSecondary; onClicked: forwardSheet.close() }
+            }
+            Basic.TextField {
+                id: searchBox
+                Layout.fillWidth: true
+                Layout.leftMargin: 16
+                Layout.rightMargin: 16
+                Layout.bottomMargin: 8
+                placeholderText: qsTr("Search people")
+                placeholderTextColor: Theme.textSecondary
+                color: Theme.text
+                font.pixelSize: 15
+                leftPadding: 16
+                rightPadding: 16
+                topPadding: 10
+                bottomPadding: 10
+                background: Rectangle { radius: height / 2; color: Theme.surfaceAlt
+                    border.width: searchBox.activeFocus ? 1 : 0; border.color: Theme.accent }
+                onTextChanged: forwardSheet.query = text.trim().toLowerCase()
+            }
+            ListView {
+                id: targets
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: Peers.model
+                boundsBehavior: Flickable.StopAtBounds
+                delegate: ItemDelegate {
+                    required property string userId
+                    required property string displayName
+                    required property string avatarUrl
+                    required property bool isOnline
+                    required property string searchText
+                    readonly property bool shown: forwardSheet.query === "" || searchText.indexOf(forwardSheet.query) >= 0
+                    visible: shown
+                    width: targets.width
+                    height: shown ? 64 : 0
+                    padding: 0
+                    onClicked: {
+                        forwardSheet.close()
+                        Chat.forwardMessage(forwardSheet.messageId, userId)
+                    }
+                    background: Rectangle { color: parent.down ? Theme.pressed : parent.hovered ? Theme.hover : "transparent" }
+                    contentItem: RowLayout {
+                        spacing: 14
+                        Avatar { Layout.leftMargin: 20; name: displayName; seed: userId; source: avatarUrl; size: 40
+                                 showPresence: true; online: isOnline }
+                        Label { Layout.fillWidth: true; text: displayName; elide: Text.ElideRight
+                                font.pixelSize: 16; color: Theme.text }
+                        Label { Layout.rightMargin: 20; text: isOnline ? qsTr("Online") : qsTr("Offline")
+                                font.pixelSize: 12; color: isOnline ? Theme.success : Theme.textSecondary }
+                    }
+                }
+            }
+            Item { Layout.preferredHeight: 4 }
         }
     }
 
@@ -616,6 +870,7 @@ Rectangle {
         padding: 20
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         onOpened: forceActiveFocus()
+        onClosed: root.afterPopup()
         background: Rectangle { radius: Theme.radius; color: Theme.surface; border.color: Theme.border }
         ColumnLayout {
             width: parent.width
@@ -662,6 +917,10 @@ Rectangle {
             if (Chat.currentPeerId === root.shownPeer)
                 return
             root.shownPeer = Chat.currentPeerId
+            if (!Chat.hasCurrentPeer) {      // chat closed: do not leave the keyboard hanging over the list
+                input.focus = false
+                Qt.inputMethod.hide()
+            }
             root.closeSearch()
             voicePlayer.stop()
             root.currentVoice = ""

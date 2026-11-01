@@ -19,6 +19,38 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
     private static native int nativeBackDepth();
     /** Asks the UI to take one back step. */
     private static native void nativeBackRequested();
+    /** Tells the native side that a new notification tap is waiting in {@link #takePendingPeer()}. */
+    private static native void nativeIntentArrived();
+
+    /** Extra put on notification intents: the conversation to open. */
+    public static final String EXTRA_PEER = "letschat.peer";
+    private static volatile String pendingPeer = "";
+
+    /** Called from C++ once the UI is ready; returns (and forgets) the conversation to open, or "". */
+    public static String takePendingPeer() {
+        String p = pendingPeer;
+        pendingPeer = "";
+        return p == null ? "" : p;
+    }
+
+    private void readPeerFrom(android.content.Intent intent) {
+        if (intent != null && intent.hasExtra(EXTRA_PEER)) {
+            pendingPeer = intent.getStringExtra(EXTRA_PEER);
+            intent.removeExtra(EXTRA_PEER);
+            try {
+                nativeIntentArrived();
+            } catch (UnsatisfiedLinkError e) {
+                // native side not up yet: it asks for the pending peer when it starts
+            }
+        }
+    }
+
+    @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        readPeerFrom(intent);
+    }
 
     private OnBackInvokedCallback backCallback;
 
@@ -26,6 +58,7 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         registerBackCallback();
+        readPeerFrom(getIntent());
     }
 
     @Override

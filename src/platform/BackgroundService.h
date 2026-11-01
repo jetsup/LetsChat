@@ -38,7 +38,8 @@ public:
     /** Called once the app is up. Starts the foreground service / tray as configured. */
     void start();
     void requestNotificationPermission();
-    void showTrayMessage(const QString &title, const QString &message);
+    void showTrayMessage(const QString &title, const QString &message, const QString &peerId = {});
+    static void requestPendingChat();   // a notification was tapped (any thread)
 
     /** True when closing the main window should only hide it. */
     Q_INVOKABLE bool shouldHideOnClose() const;
@@ -58,10 +59,13 @@ signals:
     void batteryChanged();
     void showWindowRequested();
     void backRequested();
+    /** The user tapped a notification: show this conversation. */
+    void openChatRequested(const QString &peerId);
     void backDepthChanged();
 
 private:
     void startService();
+    void pullPendingChat();
     void stopService();
 
     bool m_runInBackground = true;
@@ -70,6 +74,7 @@ private:
     static inline std::atomic<int> s_backDepth{0};
     static inline BackgroundService *s_instance = nullptr;
     QSystemTrayIcon *m_tray = nullptr;
+    QString m_lastTrayPeer;
 };
 
 #endif // BACKGROUNDSERVICE_H

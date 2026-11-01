@@ -43,7 +43,25 @@ void BackgroundService::requestBack()
 // JNI bridge for MainActivity (called on the Android UI thread, so only touch atomics/queued calls)
 static jint jniBackDepth(JNIEnv *, jclass) { return BackgroundService::backDepth(); }
 static void jniBackRequested(JNIEnv *, jclass) { BackgroundService::requestBack(); }
+static void jniIntentArrived(JNIEnv *, jclass) { BackgroundService::requestPendingChat(); }
 #endif
+
+void BackgroundService::requestPendingChat()
+{
+    if (s_instance)
+        QMetaObject::invokeMethod(s_instance, [] { s_instance->pullPendingChat(); }, Qt::QueuedConnection);
+}
+
+// Picks up the conversation of a tapped notification (Android) once the UI can show it.
+void BackgroundService::pullPendingChat()
+{
+#ifdef Q_OS_ANDROID
+    const QString peer = QJniObject::callStaticObjectMethod(
+        "com/smalnets/letschat/MainActivity", "takePendingPeer", "()Ljava/lang/String;").toString();
+    if (!peer.isEmpty())
+        emit openChatRequested(peer);
+#endif
+}
 
 void BackgroundService::start()
 {
@@ -54,11 +72,17 @@ void BackgroundService::start()
         const JNINativeMethod methods[] = {
             {"nativeBackDepth", "()I", reinterpret_cast<void *>(jniBackDepth)},
             {"nativeBackRequested", "()V", reinterpret_cast<void *>(jniBackRequested)},
+            {"nativeIntentArrived", "()V", reinterpret_cast<void *>(jniIntentArrived)},
         };
         QJniEnvironment env;
-        if (!env.registerNativeMethods("com/smalnets/letschat/MainActivity", methods, 2))
+        if (!env.registerNativeMethods("com/smalnets/letschat/MainActivity", methods, 3))
             qWarning() << "Could not register the Android back bridge";
     }
+    QTimer::singleShot(800, this, [this] { pullPendingChat(); });   // app started by a notification tap
+    connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState st) {
+        if (st == Qt::ApplicationActive)
+            pullPendingChat();
+    });
 #endif
     connect(qGuiApp, &QGuiApplication::applicationStateChanged, this,
             [](Qt::ApplicationState st) { qInfo() << "App state:" << st; });
@@ -76,7 +100,12 @@ void BackgroundService::start()
             if (r == QSystemTrayIcon::Trigger || r == QSystemTrayIcon::DoubleClick)
                 emit showWindowRequested();
         });
-        connect(m_tray, &QSystemTrayIcon::messageClicked, this, &BackgroundService::showWindowRequested);
+        // clicking a message balloon shows the window *and* the conversation it was about
+        connect(m_tray, &QSystemTrayIcon::messageClicked, this, [this] {
+            emit showWindowRequested();
+            if (!m_lastTrayPeer.isEmpty())
+                emit openChatRequested(m_lastTrayPeer);
+        });
         m_tray->show();
     }
     // With a tray icon the app must survive its window being hidden.
@@ -140,9 +169,10 @@ void BackgroundService::requestNotificationPermission()
 #endif
 }
 
-void BackgroundService::showTrayMessage(const QString &title, const QString &message)
+void BackgroundService::showTrayMessage(const QString &title, const QString &message, const QString &peerId)
 {
 #ifndef Q_OS_ANDROID
+    m_lastTrayPeer = peerId;
     if (m_tray)
         m_tray->showMessage(title, message, QSystemTrayIcon::Information, 5000);
     else

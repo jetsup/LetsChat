@@ -30,6 +30,9 @@ class ChatController : public QObject
     Q_PROPERTY(QString currentPeerName READ currentPeerName NOTIFY currentPeerChanged)
     Q_PROPERTY(bool currentPeerOnline READ currentPeerOnline NOTIFY currentPeerChanged)
     Q_PROPERTY(QString currentPeerTransport READ currentPeerTransport NOTIFY currentPeerChanged)
+    Q_PROPERTY(bool replyActive READ replyActive NOTIFY replyChanged)
+    Q_PROPERTY(QString replyName READ replyName NOTIFY replyChanged)
+    Q_PROPERTY(QString replyText READ replyText NOTIFY replyChanged)
     Q_PROPERTY(QString localIp READ localIp NOTIFY networkChanged)
     Q_PROPERTY(bool lanConnected READ lanConnected NOTIFY networkChanged)
 
@@ -44,6 +47,9 @@ public:
     QString currentPeerName() const;
     bool currentPeerOnline() const;
     QString currentPeerTransport() const;
+    bool replyActive() const { return !m_replyJson.isEmpty(); }
+    QString replyName() const { return m_replyName; }
+    QString replyText() const { return m_replyText; }
     QString localIp() const;
     bool lanConnected() const;
 
@@ -65,6 +71,14 @@ public:
     /** Row numbers (in the open conversation) of messages matching `text`. */
     Q_INVOKABLE QVariantList searchMessages(const QString &text) const;
     Q_INVOKABLE void copyText(const QString &text);
+    /** Sends a copy of a message (text, photo, file or voice note) to another contact. */
+    Q_INVOKABLE bool forwardMessage(const QString &messageId, const QString &peerId);
+
+    /** The next message sent is a reply to this one (shown as a quote). */
+    Q_INVOKABLE void setReply(const QString &messageId);
+    Q_INVOKABLE void clearReply();
+    /** Row of a message in the open conversation, or -1 (used to jump to a quoted message). */
+    Q_INVOKABLE int rowOf(const QString &messageId) const;
 
 signals:
     void currentPeerChanged();
@@ -72,6 +86,7 @@ signals:
     /** Short user-facing message (shown as a toast). */
     void notice(const QString &text);
     void messageAdded();
+    void replyChanged();
 
 private:
     struct Outgoing {
@@ -83,16 +98,19 @@ private:
         QString caption;
         int durationMs = 0;
         bool viaBluetooth = false;
+        QString reply;          // JSON of the quoted message, empty if not a reply
     };
 
     void onIncoming(const QString &fromUserId, const QString &alias, const QString &messageId,
-                    const QString &content, const QString &timestamp, const QString &viaIp);
+                    const QString &content, const QString &timestamp, const QString &viaIp,
+                    const QString &replyJson);
     enum class Route { Unreachable, Sent, InFlight };
     Route dispatch(const QString &id, Outgoing out);
     void finishDispatch(const QString &id, const QString &peerName, Route route);
     void flushQueue(const QString &peerId);
     void flushAll();
     void flushDeletes(const QString &peerId);
+    void refreshPreview(const QString &peerId);
     void onDeleteReceived(const QString &fromUserId, const QString &messageId);
     void removeFiles(const QStringList &paths);
     void onAvatarReceived(const QString &peerId, const QString &tmpPath, const QString &hash);
@@ -100,15 +118,18 @@ private:
     void publishLocalAvatar();
     void onSendFinished(const QString &messageId, bool ok, const QString &error);
     void onIncomingFile(const QString &savedPath, const QJsonObject &header, const QString &viaIp);
+    // peerId empty = the open conversation; quoteReply false for forwards (no quote is attached)
     void queueFile(const QString &path, const QString &name, qint64 size, const QString &kind,
-                   const QString &caption, int durationMs);
+                   const QString &caption, int durationMs, const QString &peerId = {}, bool quoteReply = true);
+    void sendTextTo(const QString &peerId, const QString &text, bool quoteReply);
     void storeIncoming(const QString &fromUserId, const QString &alias, const QString &id, int type,
-                       const QString &content, const QString &ts);
+                       const QString &content, const QString &ts, const QString &replyJson = {});
+    QString takeReply();
     void applyLocalIdentity();
     void refreshCurrent();
     bool resendViaBluetooth(const Outgoing &o, const QString &id);
     bool sendViaBluetooth(const QString &peerId, const QString &id, const QString &text,
-                          const QString &ts);
+                          const QString &ts, const QString &reply = {});
 
 
     IdentityManager *m_identity;
@@ -123,6 +144,7 @@ private:
     MessageModel m_messages;
     QString m_currentPeerId;
     QHash<QString, Outgoing> m_inflight;
+    QString m_replyJson, m_replyName, m_replyText;
     QSet<QString> m_deleteInflight;       // "del:<id>" requests waiting for an ack   // LAN sends awaiting an ack
     QTimer *m_retryTimer = nullptr;
     bool m_started = false;

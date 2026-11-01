@@ -23,7 +23,8 @@ public:
 
     // Messages. status: 0 = sending, 1 = sent / received, 2 = failed
     bool saveMessage(const QString &messageId, const QString &fromUserId, const QString &toUserId,
-                     const QString &content, int messageType, const QString &timestamp, int status = 1);
+                     const QString &content, int messageType, const QString &timestamp, int status = 1,
+                     const QString &replyJson = {});
     bool messageExists(const QString &messageId);
     bool updateMessageStatus(const QString &messageId, int status);
     QVariantList getMessages(const QString &conversationId, int limit = 200);
@@ -44,6 +45,8 @@ public:
     // Deleting
     QVariantMap messageInfo(const QString &messageId);        // {from, to, type, content}
     bool deleteMessage(const QString &messageId);
+    /** "Deleted for everyone": keeps the row as a placeholder (type 4) without content, files or quote. */
+    bool tombstoneMessage(const QString &messageId);
     /** Removes the whole conversation; returns the attachment files that belonged to it. */
     QStringList deleteConversation(const QString &conversationId);
     // "delete for everyone" requests that still have to reach the peer

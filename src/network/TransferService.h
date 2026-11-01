@@ -31,11 +31,13 @@ public:
 
     /** Results are reported through sendFinished(). */
     void sendText(const QString &targetIp, const QString &messageId, const QString &fromUserId,
-                  const QString &alias, const QString &content, const QString &timestamp);
+                  const QString &alias, const QString &content, const QString &timestamp,
+                  const QString &replyJson = {});
     void sendFile(const QString &targetIp, const QString &messageId, const QString &fromUserId,
                   const QString &alias, const QString &kind, const QString &filePath,
                   const QString &fileName, qint64 size, const QString &timestamp,
-                  const QString &caption = {}, int durationMs = 0);
+                  const QString &caption = {}, int durationMs = 0,
+                  const QString &replyJson = {});
 
     void sendDelete(const QString &targetIp, const QString &targetMessageId, const QString &fromUserId);
 
@@ -49,7 +51,8 @@ signals:
     void deleteReceived(const QString &fromUserId, const QString &targetMessageId);
     void avatarReceived(const QString &peerUserId, const QString &path, const QString &hash);
     void textReceived(const QString &fromUserId, const QString &alias, const QString &messageId,
-                      const QString &content, const QString &timestamp, const QString &senderIp);
+                      const QString &content, const QString &timestamp, const QString &senderIp,
+                      const QString &replyJson);
     /** `header` is the sender's file frame (id, fromUserId, alias, kind, name, size, caption, duration…). */
     void fileReceived(const QString &savedPath, const QJsonObject &header, const QString &senderIp);
     void sendFinished(const QString &messageId, bool ok, const QString &error);

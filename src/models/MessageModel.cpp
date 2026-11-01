@@ -30,6 +30,10 @@ QVariant MessageModel::data(const QModelIndex &index, int role) const
     case AttachmentPathRole: return m.attachmentPath;
     case AttachmentUrlRole:
         return m.attachmentPath.isEmpty() ? QString() : QUrl::fromLocalFile(m.attachmentPath).toString();
+    case ReplyIdRole: return m.replyId;
+    case ReplyTextRole: return m.replyText;
+    case ReplyFromMeRole: return m.replyFromMe;
+    case ReplyTypeRole: return m.replyType;
     case CaptionRole: return m.caption;
     case DurationRole: return m.durationMs;
     case DurationTextRole: {
@@ -59,13 +63,15 @@ QHash<int, QByteArray> MessageModel::roleNames() const
         {DayStringRole, "dayString"},   {StatusRole, "status"},
         {AttachmentNameRole, "attachmentName"}, {AttachmentPathRole, "attachmentPath"},
         {AttachmentUrlRole, "attachmentUrl"},   {AttachmentSizeRole, "attachmentSize"},
+        {ReplyIdRole, "replyId"}, {ReplyTextRole, "replyText"},
+        {ReplyFromMeRole, "replyFromMe"}, {ReplyTypeRole, "replyType"},
         {CaptionRole, "caption"}, {DurationRole, "duration"}, {DurationTextRole, "durationText"},
     };
 }
 
 Message MessageModel::make(const QString &id, const QString &from, const QString &to,
                            const QString &content, int type, const QString &timestamp, int status,
-                           const QString &me)
+                           const QString &me, const QString &replyJson)
 {
     Message m;
     m.messageId = id;
@@ -78,7 +84,14 @@ Message MessageModel::make(const QString &id, const QString &from, const QString
         m.timestamp = QDateTime::currentDateTime();
     m.isOwnMessage = (from == me);
     m.status = status;
-    if (type > 0) {
+    if (!replyJson.isEmpty()) {
+        const QJsonObject r = QJsonDocument::fromJson(replyJson.toUtf8()).object();
+        m.replyId = r["id"].toString();
+        m.replyText = r["text"].toString();
+        m.replyType = r["type"].toInt();
+        m.replyFromMe = r["from"].toString() == me;
+    }
+    if (type > 0 && type < 4) {
         const QJsonObject o = QJsonDocument::fromJson(content.toUtf8()).object();
         m.attachmentName = o["name"].toString();
         m.attachmentPath = o["path"].toString();
@@ -90,11 +103,12 @@ Message MessageModel::make(const QString &id, const QString &from, const QString
 }
 
 void MessageModel::addMessage(const QString &id, const QString &from, const QString &to,
-                              const QString &content, int type, const QString &timestamp, int status)
+                              const QString &content, int type, const QString &timestamp, int status,
+                              const QString &replyJson)
 {
     const int row = int(m_messages.size());
     beginInsertRows({}, row, row);
-    m_messages.append(make(id, from, to, content, type, timestamp, status, m_currentUserId));
+    m_messages.append(make(id, from, to, content, type, timestamp, status, m_currentUserId, replyJson));
     endInsertRows();
     emit countChanged();
 }
@@ -119,7 +133,7 @@ void MessageModel::setMessages(const QVariantList &rows)
         m_messages.append(make(r["id"].toString(), r["fromUserId"].toString(),
                                r["toUserId"].toString(), r["content"].toString(),
                                r["messageType"].toInt(), r["timestamp"].toString(),
-                               r["status"].toInt(), m_currentUserId));
+                               r["status"].toInt(), m_currentUserId, r["reply"].toString()));
     }
     endResetModel();
     emit countChanged();
@@ -146,6 +160,8 @@ QString MessageModel::preview(int messageType, const QString &content)
 {
     if (messageType == 0)
         return content;
+    if (messageType == 4)
+        return tr("Message deleted");
     const QJsonObject o = QJsonDocument::fromJson(content.toUtf8()).object();
     const QString name = o["name"].toString();
     if (messageType == 1) {
@@ -178,9 +194,44 @@ QVariantList MessageModel::search(const QString &query) const
         return rows;
     for (int i = 0; i < m_messages.size(); ++i) {
         const Message &m = m_messages.at(i);
+        if (m.messageType == 4)
+            continue;   // deleted placeholder
         const QString haystack = m.messageType == 0 ? m.content : (m.caption + " " + m.attachmentName);
         if (haystack.contains(q, Qt::CaseInsensitive))
             rows.append(i);
     }
     return rows;
+}
+
+void MessageModel::markDeleted(const QString &messageId)
+{
+    const int i = rowOf(messageId);
+    if (i < 0)
+        return;
+    Message &m = m_messages[i];
+    m.messageType = 4;
+    m.content.clear();
+    m.caption.clear();
+    m.attachmentName.clear();
+    m.attachmentPath.clear();
+    m.attachmentSize = 0;
+    m.replyId.clear();
+    m.replyText.clear();
+    m.status = 1;
+    emit dataChanged(index(i), index(i));
+}
+
+int MessageModel::rowOf(const QString &messageId) const
+{
+    for (int i = 0; i < m_messages.size(); ++i)
+        if (m_messages[i].messageId == messageId)
+            return i;
+    return -1;
+}
+
+QString MessageModel::replyJsonFor(const QString &id, const QString &fromUserId, const QString &text, int type)
+{
+    return QString::fromUtf8(QJsonDocument(QJsonObject{{"id", id}, {"from", fromUserId},
+                                                       {"text", text.left(160)}, {"type", type}})
+                                 .toJson(QJsonDocument::Compact));
 }

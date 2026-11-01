@@ -146,6 +146,11 @@ void BluetoothService::startListening()
     }
 
     m_server = new QBluetoothServer(QBluetoothServiceInfo::RfcommProtocol, this);
+#ifdef Q_OS_ANDROID
+    // Android listens with a "secure" socket by default, which only accepts devices that are paired.
+    // LetsChat links are meant to work between devices that never met before.
+    m_server->setSecurityFlags(QBluetooth::Security::NoSecurity);
+#endif
     connect(m_server, &QBluetoothServer::newConnection, this, [this] {
         while (QBluetoothSocket *s = m_server->nextPendingConnection()) {
             qInfo() << "Bluetooth: incoming connection from" << s->peerAddress().toString();
@@ -307,6 +312,11 @@ void BluetoothService::connectToDevice(const QString &address)
         emit devicesChanged();
 
         auto *socket = new QBluetoothSocket(QBluetoothServiceInfo::RfcommProtocol, this);
+#ifdef Q_OS_ANDROID
+        // The default on Android is a secure socket, which needs a pairing the other side (e.g. a
+        // desktop that is not "pairable") may never accept. Use a plain RFCOMM link instead.
+        socket->setPreferredSecurityFlags(QBluetooth::Security::NoSecurity);
+#endif
         auto failed = [this, socket, address](const QString &why) {
             if (!m_connecting.contains(address))
                 return;
@@ -445,25 +455,25 @@ void BluetoothService::handleFrame(QBluetoothSocket *socket, const QJsonObject &
         if (link.userId.isEmpty())
             return;     // ignore data before the hello
         emit textReceived(link.userId, link.alias, msg["id"].toString(), msg["content"].toString(),
-                          msg["timestamp"].toString());
+                          msg["timestamp"].toString(),
+                          msg.contains("reply") ? QString::fromUtf8(QJsonDocument(msg["reply"].toObject()).toJson(QJsonDocument::Compact)) : QString());
     }
 }
 
 bool BluetoothService::sendText(const QString &userId, const QString &messageId,
                                 const QString &fromUserId, const QString &alias,
-                                const QString &content, const QString &timestamp)
+                                const QString &content, const QString &timestamp,
+                                const QString &replyJson)
 {
     QBluetoothSocket *s = m_byUser.value(userId, nullptr);
     if (!s || s->state() != QBluetoothSocket::SocketState::ConnectedState)
         return false;
-    const QByteArray data = QJsonDocument(QJsonObject{{"type", "text"},
-                                                      {"v", AppConfig::PROTOCOL_VERSION},
-                                                      {"id", messageId},
-                                                      {"fromUserId", fromUserId},
-                                                      {"alias", alias},
-                                                      {"content", content},
-                                                      {"timestamp", timestamp}})
-                                .toJson(QJsonDocument::Compact) + "\n";
+    QJsonObject frame{{"type", "text"}, {"v", AppConfig::PROTOCOL_VERSION}, {"id", messageId},
+                      {"fromUserId", fromUserId}, {"alias", alias}, {"content", content},
+                      {"timestamp", timestamp}};
+    if (!replyJson.isEmpty())
+        frame["reply"] = QJsonDocument::fromJson(replyJson.toUtf8()).object();
+    const QByteArray data = QJsonDocument(frame).toJson(QJsonDocument::Compact) + "\n";
     return s->write(data) == data.size();
 }
 
@@ -471,7 +481,7 @@ bool BluetoothService::sendFile(const QString &userId, const QString &messageId,
                                 const QString &fromUserId, const QString &alias,
                                 const QString &kind, const QString &filePath,
                                 const QString &fileName, qint64 size, const QString &timestamp,
-                                const QString &caption, int durationMs)
+                                const QString &caption, int durationMs, const QString &replyJson)
 {
     QBluetoothSocket *s = m_byUser.value(userId, nullptr);
     if (!s || s->state() != QBluetoothSocket::SocketState::ConnectedState)
@@ -481,12 +491,13 @@ bool BluetoothService::sendFile(const QString &userId, const QString &messageId,
         delete file;
         return false;
     }
-    s->write(QJsonDocument(QJsonObject{{"type", "file"}, {"v", AppConfig::PROTOCOL_VERSION},
-                                       {"id", messageId}, {"fromUserId", fromUserId},
-                                       {"alias", alias}, {"kind", kind}, {"name", fileName},
-                                       {"size", double(size)}, {"timestamp", timestamp},
-                                       {"caption", caption}, {"duration", durationMs}})
-                 .toJson(QJsonDocument::Compact) + "\n");
+    QJsonObject frame{{"type", "file"}, {"v", AppConfig::PROTOCOL_VERSION}, {"id", messageId},
+                      {"fromUserId", fromUserId}, {"alias", alias}, {"kind", kind}, {"name", fileName},
+                      {"size", double(size)}, {"timestamp", timestamp}, {"caption", caption},
+                      {"duration", durationMs}};
+    if (!replyJson.isEmpty())
+        frame["reply"] = QJsonDocument::fromJson(replyJson.toUtf8()).object();
+    s->write(QJsonDocument(frame).toJson(QJsonDocument::Compact) + "\n");
     auto *pump = new FilePump(s, file, s);
     connect(pump, &FilePump::finished, this,
             [this, messageId, pump](bool ok) { emit sendFinished(messageId, ok); pump->deleteLater(); });

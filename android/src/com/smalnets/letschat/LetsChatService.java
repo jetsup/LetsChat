@@ -51,7 +51,8 @@ public class LetsChatService extends Service {
         context.stopService(new Intent(context, LetsChatService.class));
     }
 
-    public static void showMessageNotification(Context context, String title, String text, int id) {
+    @SuppressWarnings("deprecation")   // priority/defaults are only used below API 26
+    public static void showMessageNotification(Context context, String title, String text, int id, String peerId) {
         try {
             ensureChannels(context);
             Notification.Builder b = builder(context, CHANNEL_MESSAGES)
@@ -59,7 +60,7 @@ public class LetsChatService extends Service {
                     .setContentText(text)
                     .setStyle(new Notification.BigTextStyle().bigText(text))
                     .setAutoCancel(true)
-                    .setContentIntent(openAppIntent(context));
+                    .setContentIntent(openAppIntent(context, peerId));
             if (Build.VERSION.SDK_INT < 26) {
                 b.setPriority(Notification.PRIORITY_HIGH).setDefaults(Notification.DEFAULT_ALL);
             }
@@ -135,7 +136,7 @@ public class LetsChatService extends Service {
                 .setContentTitle("LetsChat is running")
                 .setContentText("Listening for nearby devices on Wi-Fi and Bluetooth")
                 .setOngoing(true)
-                .setContentIntent(openAppIntent(this))
+                .setContentIntent(openAppIntent(this, null))
                 .build();
         try {
             if (Build.VERSION.SDK_INT >= 29) {
@@ -186,6 +187,7 @@ public class LetsChatService extends Service {
         }
     }
 
+    @SuppressWarnings("deprecation")   // Builder(Context) is only used below API 26
     private static Notification.Builder builder(Context context, String channel) {
         Notification.Builder b = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(context, channel)
@@ -195,13 +197,19 @@ public class LetsChatService extends Service {
         return b;
     }
 
-    private static PendingIntent openAppIntent(Context context) {
+    /** Opens the app; with a peer id it also asks MainActivity to open that conversation. */
+    private static PendingIntent openAppIntent(Context context, String peerId) {
         Intent launch = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         if (launch != null) {
             launch.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+            if (peerId != null && !peerId.isEmpty()) {
+                launch.putExtra(MainActivity.EXTRA_PEER, peerId);
+            }
         }
+        // one PendingIntent per conversation, so each keeps its own extra
+        int request = peerId == null ? 0 : (peerId.hashCode() & 0x7fffffff);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
-        return PendingIntent.getActivity(context, 0, launch, flags);
+        return PendingIntent.getActivity(context, request, launch, flags);
     }
 
     private static void ensureChannels(Context context) {

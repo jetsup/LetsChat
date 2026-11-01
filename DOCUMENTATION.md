@@ -30,7 +30,10 @@ Targets: Linux, Windows, macOS (desktop) and Android (Qt 6.12, tested on Android
 | Contact info | Shows picture, nickname and broadcast name, status, **connection mode** (Wi-Fi / Bluetooth / both), **IP address** (Wi-Fi), Bluetooth address, **connected since** (or *last seen*), **first connected**, device name and user ID. |
 | Search people | The *Search people* box at the top of the chat list (always shown) matches nickname, broadcast name, device name and IP address. |
 | Search in a chat | Chat ⋮ menu (top right) → **Search**. Matches are outlined; the counter shows *current/total*; ▲ / ▼ (or Enter) jump between them, ✕ closes. |
-| Delete a message | Long-press (touch) or right-click (desktop) a message → **Delete for me**, or **Delete for everyone** for your own messages. The deletion is sent to the contact by message id; if they are offline it is queued and sent when they are back. A contact can only delete messages that *they* sent. |
+| Delete a message | Long-press (touch) or right-click (desktop) a message → **Delete for me** (removed from this device only), or **Delete for everyone** for your own messages. The bubble is replaced on both sides by an italic placeholder, *"You deleted this message"* for the sender and *"This message was deleted"* for the contact; the text, file and any quote are erased. The request is queued if the contact is offline and delivered when they are back. A contact can only delete messages that *they* sent. |
+| Forward a message | Long-press (touch) or right-click (desktop) a message → **Forward**, then pick a contact (the list can be searched). A copy is sent to that contact as a new message: text, photo (with caption), file or voice note; it is not linked to the original and carries no quote. Deleted messages cannot be forwarded. If the contact is offline it is queued like any other message. |
+| Message options | The long-press menu is a **bottom sheet** on phones (anchored above the navigation bar) and a card on desktop: Reply, Forward, Copy, Delete for me, Delete for everyone. |
+| Reply to a message | **Swipe a message to the left**, or long-press → **Reply**. A "Replying to …" bar appears above the message field (✕ cancels it) and the sent message shows the quoted text above it. Tapping the quote jumps to the original message. A reply bar is dropped when you switch chats. |
 | Delete a conversation | Chat ⋮ menu → **Delete chat…**, or the same button on the Contact info page. Removes all messages and files with them from this device only. |
 | Esc (desktop) | Closes the topmost thing: image viewer / dialog → page → the open chat (the right panel then asks you to select a conversation). |
 | Settings | Gear icon: name, theme (System/Light/Dark), background running, notifications, Bluetooth switch. |
@@ -146,8 +149,13 @@ different from the one it stored sends `{"type":"avatar_get","fromUserId"}` (TCP
 frame with `"kind":"avatar"` followed by the JPEG bytes. Pictures are stored as `avatars/<userId>.jpg`; an empty hash means the
 contact removed its picture.
 
+### Replies
+Text and file frames may carry `"reply":{"id","from","text","type"}`: the id of the quoted message, its author, a short preview (up to 160
+characters, or "Photo" / "Voice message" / file name) and its type. Quotes are stored (encrypted) with the message in
+`messages.reply`; the quoted text is a snapshot, so it stays readable if the original is later deleted.
+
 ### Deleting messages
-`{"type":"delete","id":"del:<msgId>","target":"<msgId>","fromUserId"}` (acknowledged over TCP, a plain frame on Bluetooth). Requests
+`{"type":"delete","id":"del:<msgId>","target":"<msgId>","fromUserId"}` (acknowledged over TCP, a plain frame on Bluetooth). Receiving a delete turns the stored message into type 4 (placeholder, no content, no quote). Requests
 that could not be delivered stay in the `pending_deletes` table and are retried like queued messages.
 
 ### Files, photos and voice notes
@@ -204,6 +212,14 @@ with pinned device certificates) and a vetted AEAD cipher.
   `QtAndroidPrivate::startActivity` (private Qt API, needs `Qt6::CorePrivate`).
 * **Voice notes**: `RECORD_AUDIO` runtime permission via `QMicrophonePermission`; recording and playback use Qt Multimedia
   (FFmpeg backend), AAC in an `.m4a` container.
+* **Bluetooth security**: Android's default RFCOMM sockets are *secure* and require the two devices to be paired first. A desktop
+  that is not "pairable" (BlueZ `Pairable: no`, the usual default) never accepts that pairing, so phone → desktop
+  connections failed while desktop → phone worked. LetsChat therefore uses non-secure RFCOMM on Android
+  (`setPreferredSecurityFlags(NoSecurity)` for the client, `setSecurityFlags(NoSecurity)` for the server); no pairing
+  dialog, and BT messages are not end-to-end encrypted (same as LAN).
+* **Notification tap**: the notification's intent carries the sender's id (`letschat.peer`); `MainActivity` stores it, the
+  native side picks it up (`Background.openChatRequested`) and QML leaves any page and opens that conversation. On desktop,
+  clicking a tray message balloon shows the window and opens the conversation too.
 * **Device name**: `Build.MODEL` (the usual hostname is just “localhost” on Android).
 * **Icons**: `android/res/drawable-*` (launcher + notification) and `resources/icons/app.png` (desktop/tray).
 
@@ -261,6 +277,11 @@ Useful log lines: `Discovery: listening…`, `Transfer: listening…`, `LAN: net
 | Build | `-Wdeprecated`: implicit `this` capture in `[=]` lambdas (TransferService) | Explicit `[=, this]`; a full `-Wall -Wextra` build is now warning-free for project sources |
 | Voice notes | Pause restarted the note; the play/pause icon never updated for notes whose file name has a space (URL strings differ by percent-encoding) | The player is keyed on the message id instead of the URL |
 | Chat list | Last-message previews could be skipped at start-up (the sorted view re-ordered while being iterated) | Iterate the source model |
+| Bluetooth | Android → desktop connect failed (secure socket needs pairing the desktop refuses) | Non-secure RFCOMM on Android |
+| Notifications | Tapping a notification only opened the app | Opens the sender's conversation |
+| Messages | A deleted message disappeared without a trace | Placeholder bubble (type 4); replies added |
+| Message menu | Long-press menu (a QML `Menu`) opened at an odd position on phones | Bottom-sheet popup parented to the chat page, so it also stays clear of the system navigation bar |
+| Keyboard | Closing any popup in a chat (options, dialogs, viewer) re-opened the on-screen keyboard | Focus is parked on the page and the keyboard is hidden again for a moment afterwards (Android re-shows it asynchronously) |
 | Dead code | `sendFile` stub, unused `SettingsManager`, duplicated settings | Removed (file transfer was reimplemented properly, see §3) |
 
 ## 8. Known limitations / ideas

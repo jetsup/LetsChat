@@ -37,13 +37,13 @@ void NotificationManager::showMessageNotification(const QString &senderName, con
     }
     QJniObject::callStaticMethod<void>(
         "com/smalnets/letschat/LetsChatService", "showMessageNotification",
-        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;I)V",
+        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;ILjava/lang/String;)V",
         context.object(), QJniObject::fromString(senderName).object<jstring>(),
-        QJniObject::fromString(message).object<jstring>(), jint(qHash(peerId)));
+        QJniObject::fromString(message).object<jstring>(), jint(qHash(peerId)),
+        QJniObject::fromString(peerId).object<jstring>());
 #else
-    Q_UNUSED(peerId)
     if (m_background)
-        m_background->showTrayMessage(senderName, message);
+        m_background->showTrayMessage(senderName, message, peerId);
     else
         qInfo() << "Notification:" << senderName << message;
 #endif

@@ -109,6 +109,8 @@ bool DatabaseManager::createTables()
         q.exec("ALTER TABLE messages ADD COLUMN status INTEGER DEFAULT 1");
     if (!columnExists("peers", "bt_address"))
         q.exec("ALTER TABLE peers ADD COLUMN bt_address TEXT");
+    if (!columnExists("messages", "reply"))
+        q.exec("ALTER TABLE messages ADD COLUMN reply TEXT");
     if (!columnExists("peers", "nickname"))
         q.exec("ALTER TABLE peers ADD COLUMN nickname TEXT");
     if (!columnExists("peers", "first_seen"))
@@ -120,12 +122,12 @@ bool DatabaseManager::createTables()
 
 bool DatabaseManager::saveMessage(const QString &messageId, const QString &fromUserId,
                                   const QString &toUserId, const QString &content, int messageType,
-                                  const QString &timestamp, int status)
+                                  const QString &timestamp, int status, const QString &replyJson)
 {
     QSqlQuery q(m_db);
     q.prepare("INSERT OR REPLACE INTO messages "
-              "(id, from_user_id, to_user_id, content, message_type, timestamp, conversation_id, status) "
-              "VALUES (?,?,?,?,?,?,?,?)");
+              "(id, from_user_id, to_user_id, content, message_type, timestamp, conversation_id, status, reply) "
+              "VALUES (?,?,?,?,?,?,?,?,?)");
     q.addBindValue(messageId);
     q.addBindValue(fromUserId);
     q.addBindValue(toUserId);
@@ -134,6 +136,7 @@ bool DatabaseManager::saveMessage(const QString &messageId, const QString &fromU
     q.addBindValue(timestamp);
     q.addBindValue(conversationId(fromUserId, toUserId));
     q.addBindValue(status);
+    q.addBindValue(replyJson.isEmpty() ? QString() : encode(replyJson));   // quotes are private too
     if (!q.exec()) {
         qWarning() << "saveMessage failed:" << q.lastError().text();
         emit error(q.lastError().text());
@@ -164,7 +167,7 @@ QVariantList DatabaseManager::getMessages(const QString &conversationId, int lim
     QVariantList out;
     QSqlQuery q(m_db);
     // newest `limit` rows, returned oldest-first
-    q.prepare("SELECT id, from_user_id, to_user_id, content, message_type, timestamp, status FROM ("
+    q.prepare("SELECT id, from_user_id, to_user_id, content, message_type, timestamp, status, reply FROM ("
               "SELECT * FROM messages WHERE conversation_id = ? ORDER BY timestamp DESC LIMIT ?) "
               "ORDER BY timestamp ASC");
     q.addBindValue(conversationId);
@@ -182,6 +185,8 @@ QVariantList DatabaseManager::getMessages(const QString &conversationId, int lim
         m["messageType"] = q.value(4).toInt();
         m["timestamp"] = q.value(5).toString();
         m["status"] = q.value(6).toInt();
+        const QString reply = q.value(7).toString();
+        m["reply"] = reply.isEmpty() ? QString() : decode(reply);
         out.append(m);
     }
     return out;
@@ -255,7 +260,7 @@ QVariantList DatabaseManager::pendingMessages(const QString &from, const QString
 {
     QVariantList out;
     QSqlQuery q(m_db);
-    q.prepare("SELECT id, content, message_type, timestamp FROM messages "
+    q.prepare("SELECT id, content, message_type, timestamp, reply FROM messages "
               "WHERE from_user_id = ? AND to_user_id = ? AND status IN (0, 3) AND timestamp > ? "
               "ORDER BY timestamp ASC LIMIT 50");
     q.addBindValue(from);
@@ -267,7 +272,8 @@ QVariantList DatabaseManager::pendingMessages(const QString &from, const QString
         out.append(QVariantMap{{"id", q.value(0).toString()},
                                {"content", decode(q.value(1).toString())},
                                {"messageType", q.value(2).toInt()},
-                               {"timestamp", q.value(3).toString()}});
+                               {"timestamp", q.value(3).toString()},
+                               {"reply", q.value(4).toString().isEmpty() ? QString() : decode(q.value(4).toString())}});
     }
     return out;
 }
@@ -393,4 +399,14 @@ QStringList DatabaseManager::peersWithPendingDeletes()
         while (q.next())
             out << q.value(0).toString();
     return out;
+}
+
+bool DatabaseManager::tombstoneMessage(const QString &messageId)
+{
+    QSqlQuery q(m_db);
+    // status 1: a deleted message must never be re-sent from the retry queue
+    q.prepare("UPDATE messages SET message_type = 4, content = ?, reply = NULL, status = 1 WHERE id = ?");
+    q.addBindValue(encode(QString()));
+    q.addBindValue(messageId);
+    return q.exec();
 }

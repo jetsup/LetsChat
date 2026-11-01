@@ -110,7 +110,8 @@ void TransferService::onNewConnection()
             const QString id = msg["id"].toString();
             emit textReceived(msg["fromUserId"].toString(), msg["alias"].toString(), id,
                               msg["content"].toString(), msg["timestamp"].toString(),
-                              ipOf(socket->peerAddress()));
+                              ipOf(socket->peerAddress()),
+                              msg.contains("reply") ? QString::fromUtf8(QJsonDocument(msg["reply"].toObject()).toJson(QJsonDocument::Compact)) : QString());
             ack(id);
         });
         connect(parser, &FrameParser::fileReceived, this,
@@ -127,23 +128,31 @@ void TransferService::onNewConnection()
 
 // --------------------------------------------------------------------------------- sending
 
-void TransferService::sendText(const QString &ip, const QString &id, const QString &from,
-                               const QString &alias, const QString &content, const QString &ts)
+static QJsonObject withReply(QJsonObject frame, const QString &replyJson)
 {
-    startSend(ip, id, {{"type", "text"}, {"v", AppConfig::PROTOCOL_VERSION}, {"id", id},
-                       {"fromUserId", from}, {"alias", alias}, {"content", content},
-                       {"timestamp", ts}}, {});
+    if (!replyJson.isEmpty())
+        frame["reply"] = QJsonDocument::fromJson(replyJson.toUtf8()).object();
+    return frame;
+}
+
+void TransferService::sendText(const QString &ip, const QString &id, const QString &from,
+                               const QString &alias, const QString &content, const QString &ts,
+                               const QString &replyJson)
+{
+    startSend(ip, id, withReply({{"type", "text"}, {"v", AppConfig::PROTOCOL_VERSION}, {"id", id},
+                                 {"fromUserId", from}, {"alias", alias}, {"content", content},
+                                 {"timestamp", ts}}, replyJson), {});
 }
 
 void TransferService::sendFile(const QString &ip, const QString &id, const QString &from,
                                const QString &alias, const QString &kind, const QString &filePath,
                                const QString &fileName, qint64 size, const QString &ts,
-                               const QString &caption, int durationMs)
+                               const QString &caption, int durationMs, const QString &replyJson)
 {
-    startSend(ip, id, {{"type", "file"}, {"v", AppConfig::PROTOCOL_VERSION}, {"id", id},
-                       {"fromUserId", from}, {"alias", alias}, {"kind", kind},
-                       {"name", fileName}, {"size", double(size)}, {"timestamp", ts},
-                       {"caption", caption}, {"duration", durationMs}}, filePath);
+    startSend(ip, id, withReply({{"type", "file"}, {"v", AppConfig::PROTOCOL_VERSION}, {"id", id},
+                                 {"fromUserId", from}, {"alias", alias}, {"kind", kind},
+                                 {"name", fileName}, {"size", double(size)}, {"timestamp", ts},
+                                 {"caption", caption}, {"duration", durationMs}}, replyJson), filePath);
 }
 
 void TransferService::startSend(const QString &ip, const QString &id, const QJsonObject &header,
