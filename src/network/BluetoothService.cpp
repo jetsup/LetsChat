@@ -1,6 +1,8 @@
 #include "BluetoothService.h"
 #include "FrameParser.h"
 #include "core/AppConfig.h"
+#include "security/SecureChannel.h"
+#include "security/SecurityManager.h"
 #include <QBluetoothLocalDevice>
 #include <QBluetoothPermission>
 #include <QCoreApplication>
@@ -14,8 +16,8 @@
 
 namespace { constexpr int ConnectTimeoutMs = 20000; }
 
-BluetoothService::BluetoothService(const QString &receiveDir, QObject *parent)
-    : QObject(parent), m_receiveDir(receiveDir)
+BluetoothService::BluetoothService(const QString &receiveDir, SecurityManager *security, QObject *parent)
+    : QObject(parent), m_security(security), m_receiveDir(receiveDir)
 {
     QSettings s;
     m_enabled = s.value("bluetooth/enabled", true).toBool();
@@ -330,6 +332,7 @@ void BluetoothService::connectToDevice(const QString &address)
         };
         connect(socket, &QBluetoothSocket::connected, this, [this, socket, address] {
             m_connecting.remove(address);
+            m_dialled.insert(socket);
             qInfo() << "Bluetooth: connected to" << address;
             adopt(socket);
         });
@@ -357,9 +360,25 @@ void BluetoothService::adopt(QBluetoothSocket *socket)
     m_links.insert(socket, link);
     socket->disconnect(this);   // drop the connect-phase handlers
 
-    auto *parser = new FrameParser(m_receiveDir, socket);
+    // Bluetooth Classic links are not protected here (the OS pairing is not required), so the whole
+    // conversation runs inside an authenticated Noise channel.  The side that dialled is the initiator.
+    const bool weDialled = m_dialled.remove(socket);
+    auto *chan = new SecureChannel(socket, weDialled ? NoiseXX::Initiator : NoiseXX::Responder,
+                                   m_security->identity(), nullptr, socket);
+    m_links[socket].chan = chan;
+
+    auto *parser = new FrameParser(m_receiveDir, chan);
     m_links[socket].parser = parser;
-    connect(socket, &QBluetoothSocket::readyRead, parser, [socket, parser] { parser->feed(socket->readAll()); });
+    // never write a file for a link that has not said (and proved) who it is
+    parser->setHeaderFilter([this, socket](const QJsonObject &) {
+        const auto it = m_links.constFind(socket);
+        return it != m_links.constEnd() && !it->userId.isEmpty();
+    });
+    connect(chan, &QIODevice::readyRead, parser, [chan, parser] { parser->feed(chan->readAll()); });
+    connect(chan, &SecureChannel::failed, this, [this, socket](const QString &why) {
+        qWarning() << "Bluetooth: secure channel failed:" << why;
+        dropLink(socket);
+    });
     connect(parser, &FrameParser::frame, this,
             [this, socket](const QJsonObject &msg) { if (m_links.contains(socket)) handleFrame(socket, msg); });
     connect(parser, &FrameParser::failed, this, [this, socket](const QString &why) {
@@ -385,7 +404,9 @@ void BluetoothService::adopt(QBluetoothSocket *socket)
         qWarning() << "Bluetooth: socket error" << socket->errorString();
         dropLink(socket);
     });
+    chan->start();
 
+    // queued inside the channel until the handshake has finished
     sendFrame(socket, {{"type", "hello"},
                        {"v", AppConfig::PROTOCOL_VERSION},
                        {"userId", m_localUserId},
@@ -410,9 +431,16 @@ void BluetoothService::dropLink(QBluetoothSocket *socket)
     emit devicesChanged();
 }
 
+QIODevice *BluetoothService::io(QBluetoothSocket *socket) const
+{
+    const auto it = m_links.constFind(socket);
+    return it == m_links.constEnd() ? nullptr : static_cast<QIODevice *>(it->chan);
+}
+
 void BluetoothService::sendFrame(QBluetoothSocket *socket, const QJsonObject &msg)
 {
-    socket->write(QJsonDocument(msg).toJson(QJsonDocument::Compact) + "\n");
+    if (QIODevice *dev = io(socket))
+        dev->write(QJsonDocument(msg).toJson(QJsonDocument::Compact) + "\n");
 }
 
 void BluetoothService::handleFrame(QBluetoothSocket *socket, const QJsonObject &msg)
@@ -432,6 +460,12 @@ void BluetoothService::handleFrame(QBluetoothSocket *socket, const QJsonObject &
             dropLink(socket);
             return;
         }
+        // The key that authenticated this channel must be the one pinned for the id it claims.
+        if (m_security->evaluate(userId, link.chan->remoteKey()) == SecurityManager::Trust::Changed) {
+            emit securityAlert(userId);
+            dropLink(socket);
+            return;
+        }
         link.userId = userId;
         link.alias = msg["alias"].toString();
         m_byUser.insert(userId, socket);
@@ -443,14 +477,15 @@ void BluetoothService::handleFrame(QBluetoothSocket *socket, const QJsonObject &
             emit deleteReceived(link.userId, msg["target"].toString());
     } else if (type == "avatar_get") {
         QFile f(m_localAvatarPath);
-        if (m_localAvatarPath.isEmpty() || !f.open(QIODevice::ReadOnly))
+        if (link.userId.isEmpty() || m_localAvatarPath.isEmpty() || !f.open(QIODevice::ReadOnly))
             return;
         const QByteArray bytes = f.readAll();
         const QString hash = QString::fromLatin1(
             QCryptographicHash::hash(bytes, QCryptographicHash::Sha1).toHex().left(12));
         sendFrame(socket, {{"type", "file"}, {"id", hash}, {"fromUserId", m_localUserId},
                            {"kind", "avatar"}, {"name", "avatar.jpg"}, {"size", bytes.size()}});
-        socket->write(bytes);
+        if (QIODevice *dev = io(socket))
+            dev->write(bytes);
     } else if (type == "text") {
         if (link.userId.isEmpty())
             return;     // ignore data before the hello
@@ -473,8 +508,11 @@ bool BluetoothService::sendText(const QString &userId, const QString &messageId,
                       {"timestamp", timestamp}};
     if (!replyJson.isEmpty())
         frame["reply"] = QJsonDocument::fromJson(replyJson.toUtf8()).object();
+    QIODevice *dev = io(s);
+    if (!dev)
+        return false;
     const QByteArray data = QJsonDocument(frame).toJson(QJsonDocument::Compact) + "\n";
-    return s->write(data) == data.size();
+    return dev->write(data) == data.size();
 }
 
 bool BluetoothService::sendFile(const QString &userId, const QString &messageId,
@@ -497,8 +535,13 @@ bool BluetoothService::sendFile(const QString &userId, const QString &messageId,
                       {"duration", durationMs}};
     if (!replyJson.isEmpty())
         frame["reply"] = QJsonDocument::fromJson(replyJson.toUtf8()).object();
-    s->write(QJsonDocument(frame).toJson(QJsonDocument::Compact) + "\n");
-    auto *pump = new FilePump(s, file, s);
+    QIODevice *dev = io(s);
+    if (!dev) {
+        delete file;
+        return false;
+    }
+    dev->write(QJsonDocument(frame).toJson(QJsonDocument::Compact) + "\n");
+    auto *pump = new FilePump(dev, file, dev);
     connect(pump, &FilePump::finished, this,
             [this, messageId, pump](bool ok) { emit sendFinished(messageId, ok); pump->deleteLater(); });
     pump->start();

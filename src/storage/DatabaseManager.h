@@ -36,6 +36,14 @@ public:
     void requeueStale(const QString &fromUserId, int maxAgeHours = 24);
 
     // Peers
+    // Pinned identity keys (trust on first use)
+    QByteArray peerKey(const QString &userId);
+    QString userForKey(const QByteArray &key);
+    void savePeerKey(const QString &userId, const QByteArray &key, bool verified);
+    bool isPeerVerified(const QString &userId);
+    void setPeerVerified(const QString &userId, bool verified);
+    QString peerKeySince(const QString &userId);
+
     bool savePeer(const QString &userId, const QString &alias, const QString &deviceName,
                   const QString &ipAddress, const QString &btAddress);
     QVariantList getPeers();
@@ -61,8 +69,9 @@ signals:
 private:
     bool createTables();
     bool columnExists(const QString &table, const QString &column);
-    QString encode(const QString &text) const;
-    QString decode(const QString &stored) const;
+    QString encode(const QString &text, const QByteArray &ad = {}) const;
+    QString decode(const QString &stored, const QByteArray &ad = {}) const;
+    void migrateEncryption();
     QString databasePath() const;
 
     QSqlDatabase m_db;

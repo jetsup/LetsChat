@@ -12,6 +12,9 @@
 #include <QVariantList>
 #include <functional>
 
+class SecurityManager;
+class SecureChannel;
+
 /**
  * Bluetooth Classic (RFCOMM) transport for nearby devices.
  *
@@ -32,7 +35,7 @@ class BluetoothService : public QObject
     Q_PROPERTY(QVariantList devices READ devices NOTIFY devicesChanged)
 
 public:
-    explicit BluetoothService(const QString &receiveDir, QObject *parent = nullptr);
+    explicit BluetoothService(const QString &receiveDir, SecurityManager *security, QObject *parent = nullptr);
     ~BluetoothService() override;
 
     bool available() const;
@@ -75,6 +78,8 @@ public:
                   const QString &replyJson = {});
 
 signals:
+    /** A device presented another identity key than the one pinned for it: the link was closed. */
+    void securityAlert(const QString &userId);
     void sendFinished(const QString &messageId, bool ok);
     void fileReceived(const QString &savedPath, const QJsonObject &header);
     void stateChanged();
@@ -94,6 +99,7 @@ private:
         QString userId;
         QString alias;
         class FrameParser *parser = nullptr;
+        SecureChannel *chan = nullptr;     // all traffic of this link goes through it
     };
     struct Seen { QString name; QString address; QString kind; bool paired; };
 
@@ -103,11 +109,13 @@ private:
     void adopt(QBluetoothSocket *socket);
     void handleFrame(QBluetoothSocket *socket, const QJsonObject &msg);
     void sendFrame(QBluetoothSocket *socket, const QJsonObject &msg);
+    QIODevice *io(QBluetoothSocket *socket) const;   // the encrypted channel of a link
     void dropLink(QBluetoothSocket *socket);
     void setStatus(const QString &text);
     void rememberAddress(const QString &address);
     QBluetoothSocket *socketForAddress(const QString &address) const;
 
+    SecurityManager *m_security;
     QString m_receiveDir;
     bool m_enabled = true;
     bool m_scanning = false;
@@ -121,6 +129,7 @@ private:
 
     QHash<QBluetoothSocket *, Link> m_links;
     QHash<QString, QBluetoothSocket *> m_byUser;
+    QSet<QBluetoothSocket *> m_dialled;     // sockets we opened ourselves (Noise initiator side)
     QSet<QString> m_connecting;             // addresses with an outgoing attempt in flight
     QSet<QString> m_known;                  // addresses we linked with before (auto-reconnect)
     QHash<QString, Seen> m_seen;            // scan results by address

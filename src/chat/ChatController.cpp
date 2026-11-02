@@ -9,6 +9,7 @@
 #include "network/TransferService.h"
 #include "notifications/NotificationManager.h"
 #include "platform/BackgroundService.h"
+#include "security/SecurityManager.h"
 #include "storage/DatabaseManager.h"
 #include "utils/DeviceInfo.h"
 #include <QDateTime>
@@ -27,15 +28,31 @@
 ChatController::ChatController(IdentityManager *identity, PeerManager *peers,
                                TransferService *transfer, BluetoothService *bluetooth,
                                DatabaseManager *db, NotificationManager *notifier, LanTracker *lan,
-                               BackgroundService *background, QObject *parent)
+                               BackgroundService *background, SecurityManager *security,
+                               QObject *parent)
     : QObject(parent)
     , m_identity(identity), m_peers(peers), m_transfer(transfer), m_bluetooth(bluetooth)
-    , m_db(db), m_notifier(notifier), m_lan(lan), m_background(background)
+    , m_db(db), m_notifier(notifier), m_lan(lan), m_background(background), m_security(security)
 {
     m_messages.setCurrentUserId(m_identity->userId());
 
     connect(m_transfer, &TransferService::textReceived, this, &ChatController::onIncoming);
     connect(m_transfer, &TransferService::sendFinished, this, &ChatController::onSendFinished);
+    for (QObject *src : {static_cast<QObject *>(m_transfer), static_cast<QObject *>(m_bluetooth)})
+        connect(src, SIGNAL(securityAlert(QString)), m_security, SLOT(noteAlert(QString)));
+    connect(m_security, &SecurityManager::keyChanged, this, [this](const QString &id) {
+        const Peer *p = m_peers->peers()->find(id);
+        emit notice(tr("Security warning: the safety number of %1 changed. Messages are blocked until you review it in Contact info.")
+                        .arg(p ? p->displayName() : tr("a contact")));
+        if (id == m_currentPeerId)
+            emit currentPeerChanged();
+    });
+    connect(m_security, &SecurityManager::peerSecurityChanged, this, [this](const QString &id) {
+        if (id == m_currentPeerId)
+            emit currentPeerChanged();
+        else
+            flushQueue(id);        // a key was accepted: deliver what was waiting
+    });
     connect(m_transfer, &TransferService::fileReceived, this, &ChatController::onIncomingFile);
     connect(m_bluetooth, &BluetoothService::fileReceived, this,
             [this](const QString &path, const QJsonObject &header) { onIncomingFile(path, header, {}); });
@@ -202,15 +219,17 @@ ChatController::Route ChatController::dispatch(const QString &id, Outgoing out)
     if (!peer)
         return Route::Unreachable;
     const QString me = m_identity->userId();
+    if (m_security->isBlocked(out.peerId))
+        return Route::Blocked;
 
     const bool tryLan = !peer->ipAddress.isEmpty() && m_lan->isConnected()
                         && (peer->lanOnline || !peer->btOnline);
     if (tryLan) {
         m_inflight.insert(id, out);
         if (out.type == 0)
-            m_transfer->sendText(peer->ipAddress, id, me, m_identity->alias(), out.text, out.ts, out.reply);
+            m_transfer->sendText(peer->ipAddress, out.peerId, id, me, m_identity->alias(), out.text, out.ts, out.reply);
         else
-            m_transfer->sendFile(peer->ipAddress, id, me, m_identity->alias(), out.kind, out.path,
+            m_transfer->sendFile(peer->ipAddress, out.peerId, id, me, m_identity->alias(), out.kind, out.path,
                                  out.name, out.size, out.ts, out.caption, out.durationMs, out.reply);
         return Route::InFlight;
     }
@@ -265,6 +284,12 @@ void ChatController::finishDispatch(const QString &id, const QString &peerName, 
 {
     if (route == Route::InFlight)
         return;
+    if (route == Route::Blocked) {
+        m_messages.setStatus(id, 2);
+        m_db->updateMessageStatus(id, 2);
+        emit notice(tr("Not sent: %1's safety number changed. Review it in Contact info.").arg(peerName));
+        return;
+    }
     const int status = route == Route::Sent ? 1 : 3;
     m_messages.setStatus(id, status);
     m_db->updateMessageStatus(id, status);
@@ -381,7 +406,7 @@ void ChatController::queueFile(const QString &src, const QString &name, qint64 s
 void ChatController::flushQueue(const QString &peerId)
 {
     const Peer *peer = m_peers->peers()->find(peerId);
-    if (!peer || !peer->isOnline())
+    if (!peer || !peer->isOnline() || m_security->isBlocked(peerId))
         return;
     const QString me = m_identity->userId();
     const QVariantList rows = m_db->pendingMessages(me, peerId);
@@ -548,7 +573,7 @@ void ChatController::refreshPreview(const QString &peerId)
 void ChatController::flushDeletes(const QString &peerId)
 {
     const Peer *peer = m_peers->peers()->find(peerId);
-    if (!peer || !peer->isOnline())
+    if (!peer || !peer->isOnline() || m_security->isBlocked(peerId))
         return;
     const QString me = m_identity->userId();
     for (const QString &target : m_db->pendingDeletes(peerId)) {
@@ -559,7 +584,7 @@ void ChatController::flushDeletes(const QString &peerId)
                             && (peer->lanOnline || !peer->btOnline);
         if (tryLan) {
             m_deleteInflight.insert(key);
-            m_transfer->sendDelete(peer->ipAddress, target, me);
+            m_transfer->sendDelete(peer->ipAddress, peerId, target, me);
         } else if (m_bluetooth->sendDelete(peerId, target, me)) {
             m_db->removePendingDelete(target);
         }

@@ -1,5 +1,7 @@
 #include "DatabaseManager.h"
 #include "CryptoUtils.h"
+#include "security/Crypto.h"
+#include "security/SecretStore.h"
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -10,20 +12,25 @@
 #include <QSqlQuery>
 #include <QStandardPaths>
 
-namespace { const char *kConnection = "letschat"; const char *kPrefix = "enc1:"; }
+namespace {
+const char *kConnection = "letschat";
+const char *kLegacyPrefix = "enc1:";   // version 0.2 construction (HMAC stream cipher)
+const char *kPrefix = "enc2:";         // ChaCha20-Poly1305 (RFC 8439)
+}
 
 DatabaseManager::DatabaseManager(QObject *parent)
     : QObject(parent)
 {
-    // The key is generated once per installation and kept in the app's private settings.
-    QSettings s;
-    const QByteArray stored = QByteArray::fromBase64(s.value("storage/key").toByteArray());
-    if (stored.size() == 32) {
-        m_key = stored;
-    } else {
-        m_key = CryptoUtils::randomBytes(32);
-        s.setValue("storage/key", m_key.toBase64());
+    // The database key lives in the SecretStore (Android Keystore on phones), never next to the data.
+    m_key = SecretStore::load("db_key");
+    if (m_key.size() != 32) {
+        QSettings legacy;
+        const QByteArray old = QByteArray::fromBase64(legacy.value("storage/key").toByteArray());
+        m_key = old.size() == 32 ? old : Crypto::randomBytes(32);   // keep the key of an existing database
+        if (!SecretStore::save("db_key", m_key))
+            qCritical() << "Could not protect the database key";
     }
+    QSettings().remove("storage/key");    // the plaintext copy must not stay behind
 }
 
 DatabaseManager::~DatabaseManager() { close(); }
@@ -61,16 +68,30 @@ QString DatabaseManager::conversationId(const QString &a, const QString &b)
     return a < b ? a + "_" + b : b + "_" + a;
 }
 
-QString DatabaseManager::encode(const QString &text) const
+QString DatabaseManager::encode(const QString &text, const QByteArray &ad) const
 {
-    return QString::fromLatin1(kPrefix) + CryptoUtils::encryptString(text, m_key);
+    const QByteArray nonce = Crypto::randomBytes(Crypto::NonceLen);
+    const QByteArray ct = Crypto::aeadEncrypt(m_key, nonce, ad, text.toUtf8());
+    if (nonce.isEmpty() || ct.isNull()) {
+        qCritical() << "Encryption failed - refusing to store plaintext";
+        return {};
+    }
+    return QString::fromLatin1(kPrefix) + QString::fromLatin1((nonce + ct).toBase64());
 }
 
-QString DatabaseManager::decode(const QString &stored) const
+QString DatabaseManager::decode(const QString &stored, const QByteArray &ad) const
 {
-    if (!stored.startsWith(QLatin1String(kPrefix)))
-        return stored;  // legacy plaintext row
-    return CryptoUtils::decryptString(stored.mid(int(strlen(kPrefix))), m_key);
+    if (stored.startsWith(QLatin1String(kPrefix))) {
+        const QByteArray blob = QByteArray::fromBase64(stored.mid(int(strlen(kPrefix))).toLatin1());
+        if (blob.size() < Crypto::NonceLen + Crypto::TagLen)
+            return {};
+        const QByteArray plain = Crypto::aeadDecrypt(m_key, blob.left(Crypto::NonceLen), ad,
+                                                     blob.mid(Crypto::NonceLen));
+        return plain.isNull() ? QString() : QString::fromUtf8(plain);
+    }
+    if (stored.startsWith(QLatin1String(kLegacyPrefix)))
+        return CryptoUtils::decryptString(stored.mid(int(strlen(kLegacyPrefix))), m_key);
+    return stored;   // plaintext row written by version 0.1
 }
 
 bool DatabaseManager::columnExists(const QString &table, const QString &column)
@@ -96,6 +117,8 @@ bool DatabaseManager::createTables()
         "user_id TEXT PRIMARY KEY, alias TEXT, device_name TEXT, ip_address TEXT,"
         "bt_address TEXT, is_online INTEGER DEFAULT 0, last_seen TEXT)",
         "CREATE TABLE IF NOT EXISTS pending_deletes (message_id TEXT PRIMARY KEY, peer_id TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS peer_keys (user_id TEXT PRIMARY KEY, public_key BLOB NOT NULL, "
+        "verified INTEGER DEFAULT 0, first_seen TEXT)",
     };
     for (const QString &sql : statements) {
         if (!q.exec(sql)) {
@@ -117,7 +140,39 @@ bool DatabaseManager::createTables()
         q.exec("ALTER TABLE peers ADD COLUMN first_seen TEXT");
     if (!columnExists("peers", "avatar_hash"))
         q.exec("ALTER TABLE peers ADD COLUMN avatar_hash TEXT");
+    migrateEncryption();
     return true;
+}
+
+// Re-encrypts rows written by older versions (plaintext / enc1) with the AEAD scheme.
+void DatabaseManager::migrateEncryption()
+{
+    QSqlQuery q(m_db);
+    if (!q.exec("SELECT id, content, reply FROM messages WHERE content NOT LIKE 'enc2:%' "
+                "OR (reply IS NOT NULL AND reply NOT LIKE 'enc2:%')"))
+        return;
+    struct Row { QString id, content, reply; };
+    QList<Row> rows;
+    while (q.next())
+        rows.append({q.value(0).toString(), q.value(1).toString(), q.value(2).toString()});
+    if (rows.isEmpty())
+        return;
+    m_db.transaction();
+    QSqlQuery up(m_db);
+    up.prepare("UPDATE messages SET content = ?, reply = ? WHERE id = ?");
+    for (const Row &r : rows) {
+        const QString content = r.content.startsWith("enc2:") ? r.content : encode(decode(r.content), "msg");
+        const QString reply = r.reply.isEmpty() ? QString()
+                              : (r.reply.startsWith("enc2:") ? r.reply : encode(decode(r.reply), "reply"));
+        if (content.isEmpty())
+            continue;
+        up.addBindValue(content);
+        up.addBindValue(reply.isEmpty() ? QVariant() : QVariant(reply));
+        up.addBindValue(r.id);
+        up.exec();
+    }
+    m_db.commit();
+    qInfo() << "Database: re-encrypted" << rows.size() << "messages with ChaCha20-Poly1305";
 }
 
 bool DatabaseManager::saveMessage(const QString &messageId, const QString &fromUserId,
@@ -131,12 +186,12 @@ bool DatabaseManager::saveMessage(const QString &messageId, const QString &fromU
     q.addBindValue(messageId);
     q.addBindValue(fromUserId);
     q.addBindValue(toUserId);
-    q.addBindValue(encode(content));
+    q.addBindValue(encode(content, "msg"));
     q.addBindValue(messageType);
     q.addBindValue(timestamp);
     q.addBindValue(conversationId(fromUserId, toUserId));
     q.addBindValue(status);
-    q.addBindValue(replyJson.isEmpty() ? QString() : encode(replyJson));   // quotes are private too
+    q.addBindValue(replyJson.isEmpty() ? QString() : encode(replyJson, "reply"));   // quotes are private too
     if (!q.exec()) {
         qWarning() << "saveMessage failed:" << q.lastError().text();
         emit error(q.lastError().text());
@@ -181,12 +236,12 @@ QVariantList DatabaseManager::getMessages(const QString &conversationId, int lim
         m["id"] = q.value(0).toString();
         m["fromUserId"] = q.value(1).toString();
         m["toUserId"] = q.value(2).toString();
-        m["content"] = decode(q.value(3).toString());
+        m["content"] = decode(q.value(3).toString(), "msg");
         m["messageType"] = q.value(4).toInt();
         m["timestamp"] = q.value(5).toString();
         m["status"] = q.value(6).toInt();
         const QString reply = q.value(7).toString();
-        m["reply"] = reply.isEmpty() ? QString() : decode(reply);
+        m["reply"] = reply.isEmpty() ? QString() : decode(reply, "reply");
         out.append(m);
     }
     return out;
@@ -200,7 +255,7 @@ QVariantMap DatabaseManager::lastMessage(const QString &conversationId)
     q.addBindValue(conversationId);
     QVariantMap m;
     if (q.exec() && q.next()) {
-        m["content"] = decode(q.value(0).toString());
+        m["content"] = decode(q.value(0).toString(), "msg");
         m["timestamp"] = q.value(1).toString();
         m["messageType"] = q.value(2).toInt();
     }
@@ -270,10 +325,10 @@ QVariantList DatabaseManager::pendingMessages(const QString &from, const QString
         return out;
     while (q.next()) {
         out.append(QVariantMap{{"id", q.value(0).toString()},
-                               {"content", decode(q.value(1).toString())},
+                               {"content", decode(q.value(1).toString(), "msg")},
                                {"messageType", q.value(2).toInt()},
                                {"timestamp", q.value(3).toString()},
-                               {"reply", q.value(4).toString().isEmpty() ? QString() : decode(q.value(4).toString())}});
+                               {"reply", q.value(4).toString().isEmpty() ? QString() : decode(q.value(4).toString(), "reply")}});
     }
     return out;
 }
@@ -330,7 +385,7 @@ QVariantMap DatabaseManager::messageInfo(const QString &messageId)
         m["from"] = q.value(0).toString();
         m["to"] = q.value(1).toString();
         m["type"] = q.value(2).toInt();
-        m["content"] = decode(q.value(3).toString());
+        m["content"] = decode(q.value(3).toString(), "msg");
     }
     return m;
 }
@@ -351,7 +406,7 @@ QStringList DatabaseManager::deleteConversation(const QString &conversationId)
     q.addBindValue(conversationId);
     if (q.exec()) {
         while (q.next()) {
-            const QJsonObject o = QJsonDocument::fromJson(decode(q.value(1).toString()).toUtf8()).object();
+            const QJsonObject o = QJsonDocument::fromJson(decode(q.value(1).toString(), "msg").toUtf8()).object();
             if (!o["path"].toString().isEmpty())
                 files << o["path"].toString();
         }
@@ -406,7 +461,61 @@ bool DatabaseManager::tombstoneMessage(const QString &messageId)
     QSqlQuery q(m_db);
     // status 1: a deleted message must never be re-sent from the retry queue
     q.prepare("UPDATE messages SET message_type = 4, content = ?, reply = NULL, status = 1 WHERE id = ?");
-    q.addBindValue(encode(QString()));
+    q.addBindValue(encode(QString(), "msg"));
     q.addBindValue(messageId);
     return q.exec();
+}
+
+// ---------------------------------------------------------------------------- pinned identity keys
+
+QByteArray DatabaseManager::peerKey(const QString &userId)
+{
+    QSqlQuery q(m_db);
+    q.prepare("SELECT public_key FROM peer_keys WHERE user_id = ?");
+    q.addBindValue(userId);
+    return (q.exec() && q.next()) ? q.value(0).toByteArray() : QByteArray();
+}
+
+QString DatabaseManager::userForKey(const QByteArray &key)
+{
+    QSqlQuery q(m_db);
+    q.prepare("SELECT user_id FROM peer_keys WHERE public_key = ?");
+    q.addBindValue(key);
+    return (q.exec() && q.next()) ? q.value(0).toString() : QString();
+}
+
+void DatabaseManager::savePeerKey(const QString &userId, const QByteArray &key, bool verified)
+{
+    QSqlQuery q(m_db);
+    q.prepare("INSERT OR REPLACE INTO peer_keys (user_id, public_key, verified, first_seen) VALUES (?,?,?,?)");
+    q.addBindValue(userId);
+    q.addBindValue(key);
+    q.addBindValue(verified ? 1 : 0);
+    q.addBindValue(QDateTime::currentDateTime().toString(Qt::ISODate));
+    q.exec();
+}
+
+bool DatabaseManager::isPeerVerified(const QString &userId)
+{
+    QSqlQuery q(m_db);
+    q.prepare("SELECT verified FROM peer_keys WHERE user_id = ?");
+    q.addBindValue(userId);
+    return q.exec() && q.next() && q.value(0).toInt() == 1;
+}
+
+void DatabaseManager::setPeerVerified(const QString &userId, bool verified)
+{
+    QSqlQuery q(m_db);
+    q.prepare("UPDATE peer_keys SET verified = ? WHERE user_id = ?");
+    q.addBindValue(verified ? 1 : 0);
+    q.addBindValue(userId);
+    q.exec();
+}
+
+QString DatabaseManager::peerKeySince(const QString &userId)
+{
+    QSqlQuery q(m_db);
+    q.prepare("SELECT first_seen FROM peer_keys WHERE user_id = ?");
+    q.addBindValue(userId);
+    return (q.exec() && q.next()) ? q.value(0).toString() : QString();
 }

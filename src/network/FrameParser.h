@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QJsonObject>
 #include <QObject>
+#include <functional>
 
 /**
  * Incremental parser for the wire format shared by LAN and Bluetooth:
@@ -21,6 +22,8 @@ public:
     void feed(const QByteArray &data);
 
     static QString sanitizeFileName(const QString &name);
+    /** Called with every file header before anything is written; returning false drops the connection. */
+    void setHeaderFilter(std::function<bool(const QJsonObject &)> filter) { m_filter = std::move(filter); }
 
 signals:
     void frame(const QJsonObject &frame);                       // any non-file frame
@@ -31,6 +34,7 @@ private:
     bool beginFile(const QJsonObject &header);
     void finishFile();
 
+    std::function<bool(const QJsonObject &)> m_filter;
     QString m_destDir;
     QByteArray m_buffer;
     QFile *m_file = nullptr;

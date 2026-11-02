@@ -15,6 +15,7 @@ class BluetoothService;
 class DatabaseManager;
 class NotificationManager;
 class LanTracker;
+class SecurityManager;
 class BackgroundService;
 
 /**
@@ -39,7 +40,8 @@ class ChatController : public QObject
 public:
     ChatController(IdentityManager *identity, PeerManager *peers, TransferService *transfer,
                    BluetoothService *bluetooth, DatabaseManager *db, NotificationManager *notifier,
-                   LanTracker *lan, BackgroundService *background, QObject *parent = nullptr);
+                   LanTracker *lan, BackgroundService *background, SecurityManager *security,
+                   QObject *parent = nullptr);
 
     QObject *messages() { return &m_messages; }
     bool hasCurrentPeer() const { return !m_currentPeerId.isEmpty(); }
@@ -104,7 +106,7 @@ private:
     void onIncoming(const QString &fromUserId, const QString &alias, const QString &messageId,
                     const QString &content, const QString &timestamp, const QString &viaIp,
                     const QString &replyJson);
-    enum class Route { Unreachable, Sent, InFlight };
+    enum class Route { Unreachable, Sent, InFlight, Blocked };
     Route dispatch(const QString &id, Outgoing out);
     void finishDispatch(const QString &id, const QString &peerName, Route route);
     void flushQueue(const QString &peerId);
@@ -140,6 +142,7 @@ private:
     NotificationManager *m_notifier;
     LanTracker *m_lan;
     BackgroundService *m_background;
+    SecurityManager *m_security;
 
     MessageModel m_messages;
     QString m_currentPeerId;

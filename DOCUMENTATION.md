@@ -87,6 +87,11 @@ src/
                BluetoothService RFCOMM server, device scan, links, hello + text frames
                PeerManager      merges LAN + Bluetooth knowledge into the peer list
                LanTracker       notices Wi-Fi/network changes
+  security/    Crypto            OpenSSL wrappers (X25519, ChaCha20-Poly1305), HKDF/HMAC
+               NoiseXX           Noise_XX_25519_ChaChaPoly_SHA256 handshake + transport ciphers
+               SecureChannel     encrypted QIODevice over TCP / Bluetooth sockets
+               SecurityManager   identity key, contact pinning, safety numbers
+               SecretStore       Keystore-wrapped (Android) / owner-only (desktop) secret storage
   storage/     DatabaseManager  SQLite (peers, messages) – message bodies encrypted
                CryptoUtils      HMAC-SHA256 stream cipher + MAC
   models/      PeerListModel    peers with online state per transport, unread count, last message
@@ -126,6 +131,8 @@ Backend objects are exposed to QML as singletons of the `LetsChat` module:
 
 ## 3. Protocols
 
+**Everything below travels inside the encrypted channel** (see SECURITY.md): a Noise XX handshake first, then ChaCha20-Poly1305
+records `[u16 length][ciphertext+tag]`. The frames described here are the decrypted plaintext stream.
 All frames are UTF-8 JSON objects terminated by `\n`.
 
 ### LAN discovery – UDP 45454 (broadcast)
@@ -177,20 +184,19 @@ remembered and re-connected automatically when they show up in a scan.
 
 ## 4. Storage and security
 
-* SQLite file `letschat.db` in the app data directory (`QStandardPaths::AppDataLocation`).
-* `messages` (id, from, to, content, type, timestamp, conversation_id, status) – `content` is stored as
-  `enc1:` + base64(nonce ‖ ciphertext ‖ MAC) using `CryptoUtils`. The 32-byte key is generated per
-  installation and kept in the app's private settings.
-* `peers` (user_id, alias, device_name, ip_address, bt_address, last_seen, first_seen, nickname, avatar_hash).
-* `pending_deletes` (message_id, peer_id) – "delete for everyone" requests still to be delivered.
-* Databases from version 0.1 are migrated in place; legacy plaintext rows are still readable.
+Security is a first-class feature; the full design, threat model, limits and test evidence are in **[SECURITY.md](SECURITY.md)**.
+In short:
 
-**Limits – please read:** LAN traffic is **not encrypted or authenticated**; anyone on the network can read
-or spoof messages. The at-rest encryption uses a home-made construction built from HMAC-SHA256 and a key
-stored next to the data, so it only deters casual inspection. For real security use TLS (e.g. `QSslSocket`
-with pinned device certificates) and a vetted AEAD cipher.
-
----
+* **In transit:** all traffic, on Wi-Fi *and* Bluetooth, runs inside an end-to-end encrypted, mutually authenticated
+  Noise XX channel (X25519 + ChaCha20-Poly1305). There is no plaintext fallback.
+* **Identity:** each install has a long-term X25519 key. Contacts are pinned on first use; a changed key blocks the
+  conversation until the user accepts it; *Contact info* shows a safety number to verify.
+* **At rest:** SQLite file `letschat.db` (app data directory) – `messages` (id, from, to, content, type, timestamp,
+  conversation_id, status, reply) with `content` and `reply` stored as `enc2:` + base64(nonce ‖ ciphertext ‖ tag)
+  (ChaCha20-Poly1305). `peers` (…, nickname, avatar_hash, first_seen), `peer_keys` (pinned public keys, verified flag),
+  `pending_deletes`. Older databases are migrated in place (plaintext and `enc1:` rows are re-encrypted on first start).
+* **Keys:** the database key and identity private key are kept in `SecretStore` – wrapped by the Android Keystore on phones,
+  owner-only settings file on desktop.
 
 ## 5. Android specifics
 
@@ -233,7 +239,9 @@ cmake -S . -B build/desktop -G Ninja -DCMAKE_PREFIX_PATH=~/Qt/6.12.0/gcc_64 -DCM
 cmake --build build/desktop
 ./build/desktop/appLetsChat
 ```
-Requires Qt 6.5+ with Quick, QuickControls2, Sql, Network, Bluetooth and Widgets (desktop only, for the tray).
+Requires Qt 6.5+ with Quick, QuickControls2, Sql, Network, Bluetooth, Multimedia and Widgets (desktop only, for the tray) and the
+OpenSSL 3 development files (`libssl-dev` / `openssl-devel`). Android links OpenSSL statically from the SDK's `android_openssl` package
+(`ANDROID_SDK_ROOT/android_openssl/ssl_3`).
 Linux Bluetooth needs BlueZ (`bluetoothd`) running.
 
 ### Android
@@ -282,12 +290,13 @@ Useful log lines: `Discovery: listening…`, `Transfer: listening…`, `LAN: net
 | Messages | A deleted message disappeared without a trace | Placeholder bubble (type 4); replies added |
 | Message menu | Long-press menu (a QML `Menu`) opened at an odd position on phones | Bottom-sheet popup parented to the chat page, so it also stays clear of the system navigation bar |
 | Keyboard | Closing any popup in a chat (options, dialogs, viewer) re-opened the on-screen keyboard | Focus is parked on the page and the keyboard is hidden again for a moment afterwards (Android re-shows it asynchronously) |
+| Security | Traffic was plaintext JSON (readable and spoofable on the LAN / Bluetooth); home-made at-rest cipher; any peer could claim any user id (even to delete messages) | Noise XX channel, pinned identities, safety numbers, ChaCha20-Poly1305 at rest, Keystore-wrapped keys – see SECURITY.md |
 | Dead code | `sendFile` stub, unused `SettingsManager`, duplicated settings | Removed (file transfer was reimplemented properly, see §3) |
 
 ## 8. Known limitations / ideas
 
 * Attachments are limited to 25 MB and have no progress bar. On Android, non-image files can be received but not opened from the chat yet (needs a FileProvider share/open intent); images can be viewed in the app.
-* LAN traffic unencrypted (see §4). Add TLS + device pairing.
+* Security limits (trust-on-first-use, public discovery metadata, unencrypted media files at rest, no audit) are listed in SECURITY.md §4.
 * Android background reliability depends on vendor battery management (see §1).
 * **Bluetooth was implemented and builds/starts on Android and desktop, but a two-device Bluetooth chat has not
   been verified end-to-end** (only one phone and a desktop without a second Bluetooth peer were available).

@@ -16,9 +16,15 @@ Rectangle {
     signal closeRequested()
 
     property var info: Peers.info(userId)
+    property var sec: Security.peerSecurity(userId)
     Connections {
         target: Peers
         function onPeerChanged(id) { if (id === root.userId) root.info = Peers.info(id) }
+    }
+    Connections {
+        target: Security
+        function onPeerSecurityChanged(id) { if (id === root.userId) root.sec = Security.peerSecurity(id) }
+        function onKeyChanged(id) { if (id === root.userId) root.sec = Security.peerSecurity(id) }
     }
     // the "connected since" clock
     Timer { interval: 30000; running: root.visible; repeat: true; onTriggered: root.info = Peers.info(root.userId) }
@@ -209,6 +215,115 @@ Rectangle {
                             highlighted: true
                             enabled: nick.text.trim() !== (root.info.nickname || "")
                             onClicked: { Peers.setNickname(root.userId, nick.text); nick.focus = false }
+                        }
+                    }
+                }
+
+                // ---- encryption / identity
+                Card {
+                    title: qsTr("Encryption")
+
+                    // a contact whose key changed: nothing is exchanged until the user decides
+                    Rectangle {
+                        visible: root.sec.changed === true
+                        Layout.fillWidth: true
+                        implicitHeight: warnCol.implicitHeight + 24
+                        radius: 10
+                        color: Qt.rgba(Theme.error.r, Theme.error.g, Theme.error.b, 0.14)
+                        border.color: Theme.error
+                        ColumnLayout {
+                            id: warnCol
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 8
+                            RowLayout {
+                                spacing: 8
+                                Icon { name: "warning"; size: 20; color: Theme.error }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: qsTr("Safety number changed")
+                                    font.pixelSize: 15
+                                    font.weight: Font.DemiBold
+                                    color: Theme.error
+                                }
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                                font.pixelSize: 13
+                                color: Theme.text
+                                text: qsTr("Someone is connecting as %1 with a different security key (new key %2). This happens when the contact reinstalls LetsChat or changes device, but it could also be an impostor. Messages to and from this contact are blocked until you accept the new key. Compare the new safety number with them first.")
+                                      .arg(root.info.displayName || "").arg(root.sec.newFingerprint || "")
+                            }
+                            Button {
+                                text: qsTr("Accept new key")
+                                highlighted: true
+                                Material.accent: Theme.error
+                                onClicked: Security.acceptNewKey(root.userId)
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Icon { name: "lock"; size: 20; color: Theme.success }
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 14
+                            color: Theme.text
+                            text: root.sec.hasKey
+                                  ? qsTr("Messages and files are end-to-end encrypted. Only you and this contact can read them.")
+                                  : qsTr("Encryption starts the first time you exchange a message or connect.")
+                        }
+                    }
+
+                    ColumnLayout {
+                        visible: root.sec.hasKey === true
+                        Layout.fillWidth: true
+                        spacing: 6
+                        Label {
+                            text: qsTr("Safety number")
+                            font.pixelSize: 12
+                            color: Theme.textSecondary
+                        }
+                        // 12 groups of 5 digits, four rows of three
+                        Label {
+                            Layout.fillWidth: true
+                            text: {
+                                var g = (root.sec.safetyNumber || "").split(" ")
+                                var rows = []
+                                for (var i = 0; i < g.length; i += 3)
+                                    rows.push(g.slice(i, i + 3).join("   "))
+                                return rows.join("\n")
+                            }
+                            font.family: "monospace"
+                            font.pixelSize: 15
+                            lineHeight: 1.25
+                            color: Theme.text
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                            color: Theme.textSecondary
+                            text: qsTr("To make sure nobody is listening in, compare these numbers with the ones on %1's device (in person or over a call). If they match, mark the contact as verified.")
+                                  .arg(root.info.displayName || "")
+                        }
+                        Field { label: qsTr("Their key fingerprint"); value: root.sec.fingerprint || ""; mono: true }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label {
+                                Layout.fillWidth: true
+                                text: root.sec.verified ? qsTr("Verified") : qsTr("Not verified")
+                                font.pixelSize: 15
+                                color: root.sec.verified ? Theme.success : Theme.text
+                            }
+                            Switch {
+                                checked: root.sec.verified === true
+                                onToggled: Security.setVerified(root.userId, checked)
+                            }
                         }
                     }
                 }

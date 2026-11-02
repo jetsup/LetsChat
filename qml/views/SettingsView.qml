@@ -225,6 +225,38 @@ Rectangle {
                     }
                 }
 
+                // ---------------------------------------------------------------- security
+                Card {
+                    title: qsTr("Security")
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+                        Icon { name: "lock"; size: 20; color: Theme.success }
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 14
+                            color: Theme.text
+                            text: qsTr("Everything you send is end-to-end encrypted, over Wi-Fi and Bluetooth, and stored encrypted on this device.")
+                        }
+                    }
+                    Row2 {
+                        title: qsTr("Your key fingerprint")
+                        subtitle: Security.ownFingerprint
+                    }
+                    Row2 {
+                        title: qsTr("Keys are protected by")
+                        subtitle: Security.protection
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 12
+                        color: Theme.textSecondary
+                        text: qsTr("Open a contact's info to compare safety numbers and verify them. Names and profile pictures are announced on the local network in the clear so people nearby can find you.")
+                    }
+                }
+
                 // ---------------------------------------------------------------- bluetooth
                 Card {
                     title: qsTr("Bluetooth")

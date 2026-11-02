@@ -81,9 +81,18 @@ Rectangle {
 
     // ---- who we are talking to (nickname / picture / state), refreshed on changes
     property var peerInfo: Peers.info(Chat.currentPeerId)
+    property var peerSec: Security.peerSecurity(Chat.currentPeerId)
     Connections {
         target: Chat
-        function onCurrentPeerChanged() { root.peerInfo = Peers.info(Chat.currentPeerId) }
+        function onCurrentPeerChanged() {
+            root.peerInfo = Peers.info(Chat.currentPeerId)
+            root.peerSec = Security.peerSecurity(Chat.currentPeerId)
+        }
+    }
+    Connections {
+        target: Security
+        function onPeerSecurityChanged(id) { if (id === Chat.currentPeerId) root.peerSec = Security.peerSecurity(id) }
+        function onKeyChanged(id) { if (id === Chat.currentPeerId) root.peerSec = Security.peerSecurity(id) }
     }
 
     // ---- in-chat search
@@ -178,10 +187,23 @@ Rectangle {
                         font.weight: Font.DemiBold
                         color: Theme.text
                     }
-                    Label {
-                        text: Chat.currentPeerOnline ? qsTr("Online") : qsTr("Offline")
-                        font.pixelSize: 12
-                        color: Chat.currentPeerOnline ? Theme.success : Theme.textSecondary
+                    RowLayout {
+                        spacing: 4
+                        Label {
+                            text: Chat.currentPeerOnline ? qsTr("Online") : qsTr("Offline")
+                            font.pixelSize: 12
+                            color: Chat.currentPeerOnline ? Theme.success : Theme.textSecondary
+                        }
+                        Icon {
+                            name: "lock"
+                            size: 12
+                            color: root.peerSec.verified ? Theme.success : Theme.textSecondary
+                        }
+                        Label {
+                            text: root.peerSec.verified ? qsTr("verified") : qsTr("encrypted")
+                            font.pixelSize: 12
+                            color: root.peerSec.verified ? Theme.success : Theme.textSecondary
+                        }
                     }
                 }
                 TransportBadge { transport: Chat.currentPeerTransport }
@@ -208,6 +230,29 @@ Rectangle {
             }
 
             Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.border }
+        }
+
+        // ---- the contact's key changed: say so, loudly
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: root.peerSec.changed === true ? 44 : 0
+            visible: root.peerSec.changed === true
+            color: Qt.rgba(Theme.error.r, Theme.error.g, Theme.error.b, 0.16)
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: Theme.pageMargin
+                anchors.rightMargin: Theme.pageMargin
+                spacing: 8
+                Icon { name: "warning"; size: 18; color: Theme.error }
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Safety number changed — messages are blocked. Tap to review.")
+                    font.pixelSize: 13
+                    color: Theme.text
+                    elide: Text.ElideRight
+                }
+            }
+            TapHandler { onTapped: root.profileRequested() }
         }
 
         // ---- search bar (option menu -> Search)

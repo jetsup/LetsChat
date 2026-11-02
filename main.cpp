@@ -23,6 +23,7 @@
 #include "notifications/NotificationManager.h"
 #include "models/PeerListModel.h"
 #include "platform/BackgroundService.h"
+#include "security/SecurityManager.h"
 #include "platform/MediaService.h"
 #include "storage/DatabaseManager.h"
 #include "utils/DeviceInfo.h"
@@ -49,14 +50,15 @@ int main(int argc, char *argv[])
     if (!database.initialize())
         qWarning() << "The message database could not be opened - history will not be saved";
 
+    SecurityManager security(&database);
     IdentityManager identity;
     ThemeManager themeManager;
     DeviceInfo device;
     LanTracker lanTracker;
     const QString receiveDir =
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/received";
-    TransferService transfer(receiveDir);
-    BluetoothService bluetooth(receiveDir);
+    TransferService transfer(receiveDir, &security);
+    BluetoothService bluetooth(receiveDir, &security);
     BackgroundService background;
     MediaService media(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/voice");
     NotificationManager notifier;
@@ -64,7 +66,7 @@ int main(int argc, char *argv[])
     PeerListModel::setAvatarDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/avatars");
     PeerManager peers(&database);
     ChatController chat(&identity, &peers, &transfer, &bluetooth, &database, &notifier, &lanTracker,
-                        &background);
+                        &background, &security);
 
     // Start everything as soon as the user has an identity (immediately, or after onboarding).
     if (identity.onboarded())
@@ -82,6 +84,7 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonInstance("LetsChat", 1, 0, "Background", &background);
     qmlRegisterSingletonInstance("LetsChat", 1, 0, "Notifier", &notifier);
     qmlRegisterSingletonInstance("LetsChat", 1, 0, "Media", &media);
+    qmlRegisterSingletonInstance("LetsChat", 1, 0, "Security", &security);
 
     QQmlApplicationEngine engine;
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,

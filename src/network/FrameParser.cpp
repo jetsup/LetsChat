@@ -76,6 +76,10 @@ void FrameParser::feed(const QByteArray &data)
 
 bool FrameParser::beginFile(const QJsonObject &header)
 {
+    if (m_filter && !m_filter(header)) {
+        emit failed(tr("Sender not authorised"));
+        return false;
+    }
     const qint64 size = qint64(header["size"].toDouble(-1));
     if (size < 0 || size > AppConfig::MAX_FILE_BYTES) {
         emit failed(tr("File too large"));

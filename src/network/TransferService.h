@@ -10,6 +10,8 @@
 #include <QTimer>
 
 class FrameParser;
+class SecurityManager;
+class SecureChannel;
 
 /**
  * Newline-delimited JSON over short-lived TCP connections.
@@ -22,7 +24,7 @@ class TransferService : public QObject
     Q_OBJECT
 
 public:
-    explicit TransferService(const QString &receiveDir, QObject *parent = nullptr);
+    explicit TransferService(const QString &receiveDir, SecurityManager *security, QObject *parent = nullptr);
     ~TransferService() override;
 
     void startServer();
@@ -30,16 +32,16 @@ public:
     bool isListening() const { return m_server->isListening(); }
 
     /** Results are reported through sendFinished(). */
-    void sendText(const QString &targetIp, const QString &messageId, const QString &fromUserId,
+    void sendText(const QString &targetIp, const QString &peerId, const QString &messageId, const QString &fromUserId,
                   const QString &alias, const QString &content, const QString &timestamp,
                   const QString &replyJson = {});
-    void sendFile(const QString &targetIp, const QString &messageId, const QString &fromUserId,
+    void sendFile(const QString &targetIp, const QString &peerId, const QString &messageId, const QString &fromUserId,
                   const QString &alias, const QString &kind, const QString &filePath,
                   const QString &fileName, qint64 size, const QString &timestamp,
                   const QString &caption = {}, int durationMs = 0,
                   const QString &replyJson = {});
 
-    void sendDelete(const QString &targetIp, const QString &targetMessageId, const QString &fromUserId);
+    void sendDelete(const QString &targetIp, const QString &peerId, const QString &targetMessageId, const QString &fromUserId);
 
     // profile pictures
     void setLocalUser(const QString &userId) { m_localUserId = userId; }
@@ -47,6 +49,8 @@ public:
     void requestAvatar(const QString &targetIp, const QString &peerUserId);
 
 signals:
+    /** A peer presented a different identity key than the one pinned for it: the connection was refused. */
+    void securityAlert(const QString &userId);
     /** The peer asked us to delete one of *its* messages from our history. */
     void deleteReceived(const QString &fromUserId, const QString &targetMessageId);
     void avatarReceived(const QString &peerUserId, const QString &path, const QString &hash);
@@ -59,10 +63,11 @@ signals:
 
 private:
     void onNewConnection();
-    void startSend(const QString &ip, const QString &messageId, const QJsonObject &header,
-                   const QString &filePath);
+    void startSend(const QString &ip, const QString &peerId, const QString &messageId,
+                   const QJsonObject &header, const QString &filePath);
 
     QTcpServer *m_server;
+    SecurityManager *m_security;
     QString m_receiveDir;
     QString m_localUserId;
     QString m_avatarPath;

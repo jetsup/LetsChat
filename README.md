@@ -21,7 +21,17 @@ macOS and Android.
 - Delete messages (for me / for everyone), delete whole chats, search people and search inside a chat
 - Photos (camera on Android, captions), files and **voice notes**
 
-> Security note: LAN/Bluetooth traffic is not end-to-end encrypted. See [DOCUMENTATION.md](DOCUMENTATION.md#4-storage-and-security).
+> **Security:** all messages, files, voice notes and pictures are **end-to-end encrypted and authenticated** on Wi-Fi *and*
+> Bluetooth (Noise XX, X25519, ChaCha20-Poly1305), contacts are pinned with verifiable safety numbers, and the history is encrypted
+> at rest with keys protected by the Android Keystore. See [SECURITY.md](SECURITY.md) for the design, the threat model and what is
+> **not** protected. All devices must run the same (secure) version.
+
+## Tests
+
+```bash
+cmake -S . -B build/tests -G Ninja -DCMAKE_PREFIX_PATH=$HOME/Qt/6.12.0/gcc_64 -DLETSCHAT_BUILD_TESTS=ON
+cmake --build build/tests --target tst_security && ctest --test-dir build/tests --output-on-failure
+```
 
 ## Documentation
 
@@ -51,7 +61,10 @@ LetsChat/
 
 ### Prerequisites
 
-- Qt 6.5 or later (developed with 6.12) incl. Bluetooth, Quick Controls 2, SQL (+ Widgets on desktop)
+- Qt 6.5 or later (developed with 6.12) incl. Bluetooth, Multimedia, Quick Controls 2, SQL (+ Widgets on desktop)
+- OpenSSL 3 development files on desktop (`libssl-dev` on Debian/Ubuntu, `openssl-devel` on Fedora)
+- Android: the `android_openssl` package, expected at `$ANDROID_SDK_ROOT/android_openssl/ssl_3`
+  (install it from Qt Creator's Android settings, or point `-DLETSCHAT_OPENSSL_ANDROID=<dir>` at it)
 - CMake 3.21+
 - Ninja (recommended)
 - For Android: Android SDK/NDK, Qt for Android
@@ -62,9 +75,17 @@ LetsChat/
 cd LetsChat
 mkdir -p build/Desktop_Qt_6_12_0_Debug
 cd build/Desktop_Qt_6_12_0_Debug
-cmake ../.. -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake ../.. -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=$HOME/Qt/6.12.0/gcc_64
 ninja
 ./appLetsChat
+```
+
+`CMAKE_PREFIX_PATH` must point at your Qt desktop kit (adjust the version/path). The same build can be done in
+one go from the project root:
+
+```bash
+cmake -S . -B build/desktop -G Ninja -DCMAKE_PREFIX_PATH=$HOME/Qt/6.12.0/gcc_64 -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/desktop && ./build/desktop/appLetsChat
 ```
 
 ### Release Build (Desktop)
@@ -73,7 +94,7 @@ ninja
 cd LetsChat
 mkdir -p build/Desktop_Qt_6_12_0_Release
 cd build/Desktop_Qt_6_12_0_Release
-cmake ../.. -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake ../.. -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$HOME/Qt/6.12.0/gcc_64
 ninja
 ./appLetsChat
 ```
@@ -98,7 +119,8 @@ cmake ../.. -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake \
   -DANDROID_ABI=arm64-v8a \
   -DANDROID_PLATFORM=android-28 \
-  -DQT_ANDROID_ABIS=arm64-v8a
+  -DQT_ANDROID_ABIS=arm64-v8a \
+  -DCMAKE_PREFIX_PATH=$HOME/Qt/6.12.0/android_arm64_v8a
 ninja
 androiddeployqt --input android-deployment-settings.json --output <output_dir> --android-platform android-28 --jdk $JAVA_HOME --gradle
 ```

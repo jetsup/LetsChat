@@ -35,6 +35,11 @@ qt_add_executable(appLetsChat
     src/network/FrameParser.h         src/network/FrameParser.cpp
     src/network/PeerManager.h         src/network/PeerManager.cpp
     src/network/LanTracker.h          src/network/LanTracker.cpp
+    src/security/Crypto.h             src/security/Crypto.cpp
+    src/security/NoiseXX.h            src/security/NoiseXX.cpp
+    src/security/SecureChannel.h      src/security/SecureChannel.cpp
+    src/security/SecurityManager.h    src/security/SecurityManager.cpp
+    src/security/SecretStore.h        src/security/SecretStore.cpp
     src/storage/DatabaseManager.h     src/storage/DatabaseManager.cpp
     src/storage/CryptoUtils.h         src/storage/CryptoUtils.cpp
     src/notifications/NotificationManager.h src/notifications/NotificationManager.cpp
@@ -100,6 +105,23 @@ target_link_libraries(appLetsChat PRIVATE
 )
 if(ANDROID)
     target_link_libraries(appLetsChat PRIVATE Qt6::CorePrivate)   # QtAndroidPrivate::startActivity
+    # OpenSSL (libcrypto only) is linked statically from the Android SDK's android_openssl package, so no
+    # extra shared libraries have to be shipped and no symbols clash with the system's own crypto library.
+    if(NOT ANDROID_SDK_ROOT AND DEFINED ENV{ANDROID_SDK_ROOT})
+        set(ANDROID_SDK_ROOT "$ENV{ANDROID_SDK_ROOT}")
+    endif()
+    set(LETSCHAT_OPENSSL_ANDROID "${ANDROID_SDK_ROOT}/android_openssl/ssl_3" CACHE PATH
+        "android_openssl (OpenSSL 3) directory containing include/ and <abi>/libcrypto.a")
+    if(NOT EXISTS "${LETSCHAT_OPENSSL_ANDROID}/${CMAKE_ANDROID_ARCH_ABI}/libcrypto.a")
+        message(FATAL_ERROR "OpenSSL for Android not found. Install 'android_openssl' with the SDK manager or "
+                            "set LETSCHAT_OPENSSL_ANDROID (looked in ${LETSCHAT_OPENSSL_ANDROID}).")
+    endif()
+    target_include_directories(appLetsChat PRIVATE "${LETSCHAT_OPENSSL_ANDROID}/include")
+    target_link_libraries(appLetsChat PRIVATE "${LETSCHAT_OPENSSL_ANDROID}/${CMAKE_ANDROID_ARCH_ABI}/libcrypto.a")
+    target_link_options(appLetsChat PRIVATE "-Wl,--exclude-libs,ALL")
+else()
+    find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
+    target_link_libraries(appLetsChat PRIVATE OpenSSL::Crypto)
 endif()
 if(NOT ANDROID)
     target_link_libraries(appLetsChat PRIVATE Qt6::Widgets)
@@ -110,3 +132,24 @@ install(TARGETS appLetsChat
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+# ---------------------------------------------------------------------------------------------------------
+# Security test-suite:  cmake -DLETSCHAT_BUILD_TESTS=ON ... && cmake --build ... && ctest --output-on-failure
+option(LETSCHAT_BUILD_TESTS "Build the security unit tests" OFF)
+if(LETSCHAT_BUILD_TESTS AND NOT ANDROID)
+    enable_testing()
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    qt_add_executable(tst_security
+        tests/tst_security.cpp
+        src/security/Crypto.h          src/security/Crypto.cpp
+        src/security/NoiseXX.h         src/security/NoiseXX.cpp
+        src/security/SecureChannel.h   src/security/SecureChannel.cpp
+        src/security/SecurityManager.h src/security/SecurityManager.cpp
+        src/security/SecretStore.h     src/security/SecretStore.cpp
+        src/storage/DatabaseManager.h  src/storage/DatabaseManager.cpp
+        src/storage/CryptoUtils.h      src/storage/CryptoUtils.cpp
+    )
+    target_include_directories(tst_security PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(tst_security PRIVATE Qt6::Test Qt6::Core Qt6::Network Qt6::Sql OpenSSL::Crypto)
+    add_test(NAME security COMMAND tst_security)
+endif()
