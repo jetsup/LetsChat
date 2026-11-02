@@ -264,7 +264,7 @@ Rectangle {
                         title: qsTr("Bluetooth messaging")
                         subtitle: Bluetooth.statusText !== "" ? Bluetooth.statusText
                                   : (!Bluetooth.available ? qsTr("No Bluetooth adapter on this device")
-                                     : Bluetooth.listening ? qsTr("Ready — nearby devices can connect")
+                                     : Bluetooth.listening ? qsTr("Ready: Nearby devices can connect")
                                      : qsTr("Off"))
                         Switch {
                             enabled: Bluetooth.available
