@@ -629,6 +629,32 @@ void ChatController::removeContact(const QString &peerId)
     emit notice(tr("Conversation deleted"));
 }
 
+QVariantList ChatController::sharedMedia(const QString &peerId) const
+{
+    QVariantList out;
+    const QString me = m_identity->userId();
+    const QVariantList rows = m_db->mediaMessages(DatabaseManager::conversationId(me, peerId));
+    for (const QVariant &v : rows) {
+        const QVariantMap r = v.toMap();
+        const QJsonObject o = QJsonDocument::fromJson(r["content"].toString().toUtf8()).object();
+        const QString path = o["path"].toString();
+        if (path.isEmpty() || !QFileInfo::exists(path))
+            continue;                                   // the file was removed from disk
+        QVariantMap m;
+        m["id"] = r["id"];
+        m["type"] = r["messageType"];
+        m["name"] = o["name"].toString();
+        m["size"] = o["size"].toDouble();
+        m["duration"] = o["duration"].toInt();
+        m["caption"] = o["caption"].toString();
+        m["url"] = QUrl::fromLocalFile(path).toString();
+        m["timestamp"] = r["timestamp"];
+        m["own"] = r["from"].toString() == me;
+        out.append(m);
+    }
+    return out;
+}
+
 QVariantList ChatController::searchMessages(const QString &text) const
 {
     return m_messages.search(text);

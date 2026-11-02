@@ -26,6 +26,29 @@ Rectangle {
         function onPeerSecurityChanged(id) { if (id === root.userId) root.sec = Security.peerSecurity(id) }
         function onKeyChanged(id) { if (id === root.userId) root.sec = Security.peerSecurity(id) }
     }
+    // ---- shared media
+    property var media: []
+    property bool showAllPhotos: false
+    readonly property var photos: media.filter(m => m.type === 1)
+    readonly property var others: media.filter(m => m.type !== 1)
+    function reloadMedia() { media = Chat.sharedMedia(userId) }
+    onUserIdChanged: reloadMedia()
+    Component.onCompleted: reloadMedia()
+    Connections {
+        target: Chat.messages
+        function onCountChanged() { root.reloadMedia() }
+        function onModelReset() { root.reloadMedia() }
+    }
+    function sizeText(b) {
+        if (b < 1024) return b + " B"
+        if (b < 1048576) return (b / 1024).toFixed(0) + " KB"
+        return (b / 1048576).toFixed(1) + " MB"
+    }
+    function day(iso) {
+        var d = new Date(iso)
+        return isNaN(d.getTime()) ? "" : Qt.formatDate(d, "d MMM yyyy")
+    }
+
     // the "connected since" clock
     Timer { interval: 30000; running: root.visible; repeat: true; onTriggered: root.info = Peers.info(root.userId) }
 
@@ -328,6 +351,103 @@ Rectangle {
                     }
                 }
 
+                // ---- shared photos, files and voice notes
+                Card {
+                    title: qsTr("Media, files and voice notes")
+                    visible: true
+
+                    Label {
+                        visible: root.media.length === 0
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        font.pixelSize: 13
+                        color: Theme.textSecondary
+                        text: qsTr("Nothing shared yet. Photos, files and voice notes you exchange with this contact appear here.")
+                    }
+
+                    // photos: square thumbnails, 4 per row
+                    Flow {
+                        id: photoFlow
+                        visible: root.photos.length > 0
+                        Layout.fillWidth: true
+                        spacing: 4
+                        readonly property int cols: width >= 420 ? 5 : 4
+                        readonly property real cell: (width - spacing * (cols - 1)) / cols
+                        Repeater {
+                            model: root.showAllPhotos ? root.photos : root.photos.slice(0, photoFlow.cols * 3)
+                            delegate: Rectangle {
+                                required property var modelData
+                                width: photoFlow.cell; height: photoFlow.cell
+                                radius: 6
+                                color: Theme.surfaceAlt
+                                clip: true
+                                Image {
+                                    anchors.fill: parent
+                                    source: parent.modelData.url
+                                    fillMode: Image.PreserveAspectCrop
+                                    sourceSize.width: 256
+                                    sourceSize.height: 256
+                                    asynchronous: true
+                                    autoTransform: true
+                                }
+                                TapHandler { onTapped: { mediaViewer.source = parent.modelData.url; mediaViewer.open() } }
+                            }
+                        }
+                    }
+                    Button {
+                        visible: root.photos.length > photoFlow.cols * 3
+                        Layout.alignment: Qt.AlignHCenter
+                        flat: true
+                        text: root.showAllPhotos ? qsTr("Show fewer photos")
+                                                 : qsTr("Show all %1 photos").arg(root.photos.length)
+                        onClicked: root.showAllPhotos = !root.showAllPhotos
+                    }
+
+                    // files and voice notes
+                    Repeater {
+                        model: root.others
+                        delegate: ItemDelegate {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            padding: 0
+                            implicitHeight: 52
+                            onClicked: if (Device.isDesktop) Qt.openUrlExternally(modelData.url)
+                            contentItem: RowLayout {
+                                spacing: 12
+                                Rectangle {
+                                    Layout.preferredWidth: 38; Layout.preferredHeight: 38
+                                    radius: 19
+                                    color: Theme.surfaceAlt
+                                    Icon {
+                                        anchors.centerIn: parent
+                                        name: modelData.type === 3 ? "mic" : "file"
+                                        size: 20
+                                        color: Theme.accent
+                                    }
+                                }
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 1
+                                    Label {
+                                        Layout.fillWidth: true
+                                        elide: Text.ElideMiddle
+                                        font.pixelSize: 14
+                                        color: Theme.text
+                                        text: modelData.type === 3 ? qsTr("Voice note") : modelData.name
+                                    }
+                                    Label {
+                                        font.pixelSize: 12
+                                        color: Theme.textSecondary
+                                        text: (modelData.own ? qsTr("You") : (root.info.displayName || ""))
+                                              + " · " + root.day(modelData.timestamp)
+                                              + " · " + root.sizeText(modelData.size)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // ---- connection
                 Card {
                     title: qsTr("Connection")
@@ -367,6 +487,38 @@ Rectangle {
                     onClicked: confirm.open()
                 }
             }
+        }
+    }
+
+    // full-screen photo viewer (Esc / tap closes it)
+    Popup {
+        id: mediaViewer
+        property alias source: bigPhoto.source
+        parent: Overlay.overlay
+        width: parent ? parent.width : 0
+        height: parent ? parent.height : 0
+        modal: true
+        focus: true
+        padding: 0
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onOpened: forceActiveFocus()
+        background: Rectangle { color: "#E6000000" }
+        Image {
+            id: bigPhoto
+            anchors.fill: parent
+            anchors.margins: 12
+            fillMode: Image.PreserveAspectFit
+            asynchronous: true
+            autoTransform: true
+        }
+        MouseArea { anchors.fill: parent; onClicked: mediaViewer.close() }
+        IconButton {
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.margins: 8
+            iconName: "close"
+            iconColor: "white"
+            onClicked: mediaViewer.close()
         }
     }
 

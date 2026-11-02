@@ -74,6 +74,8 @@ public:
     Q_INVOKABLE void removeContact(const QString &peerId);
     /** Row numbers (in the open conversation) of messages matching `text`. */
     Q_INVOKABLE QVariantList searchMessages(const QString &text) const;
+    /** Photos, files and voice notes exchanged with a contact (newest first), for the Contact info page. */
+    Q_INVOKABLE QVariantList sharedMedia(const QString &peerId) const;
     Q_INVOKABLE void copyText(const QString &text);
     /** Sends a copy of a message (text, photo, file or voice note) to another contact. */
     Q_INVOKABLE bool forwardMessage(const QString &messageId, const QString &peerId);

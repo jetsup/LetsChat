@@ -28,6 +28,8 @@ public:
     bool messageExists(const QString &messageId);
     bool updateMessageStatus(const QString &messageId, int status);
     QVariantList getMessages(const QString &conversationId, int limit = 200);
+    /** Every photo, file and voice note of a conversation, newest first. */
+    QVariantList mediaMessages(const QString &conversationId);
     QVariantMap lastMessage(const QString &conversationId);
     /** Own messages that still have to be delivered (status 0/3, younger than maxAgeHours). */
     QVariantList pendingMessages(const QString &fromUserId, const QString &toUserId, int maxAgeHours = 24);

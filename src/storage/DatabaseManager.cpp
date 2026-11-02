@@ -247,6 +247,27 @@ QVariantList DatabaseManager::getMessages(const QString &conversationId, int lim
     return out;
 }
 
+QVariantList DatabaseManager::mediaMessages(const QString &conversationId)
+{
+    QVariantList out;
+    QSqlQuery q(m_db);
+    q.prepare("SELECT id, from_user_id, content, message_type, timestamp FROM messages "
+              "WHERE conversation_id = ? AND message_type BETWEEN 1 AND 3 ORDER BY timestamp DESC");
+    q.addBindValue(conversationId);
+    if (!q.exec())
+        return out;
+    while (q.next()) {
+        QVariantMap m;
+        m["id"] = q.value(0).toString();
+        m["from"] = q.value(1).toString();
+        m["content"] = decode(q.value(2).toString(), "msg");
+        m["messageType"] = q.value(3).toInt();
+        m["timestamp"] = q.value(4).toString();
+        out.append(m);
+    }
+    return out;
+}
+
 QVariantMap DatabaseManager::lastMessage(const QString &conversationId)
 {
     QSqlQuery q(m_db);
