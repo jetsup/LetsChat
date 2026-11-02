@@ -10,6 +10,9 @@
 
 #ifndef Q_OS_ANDROID
 #include <QApplication>
+#include <QLocalServer>
+#include <QLocalSocket>
+#include <QLockFile>
 #endif
 
 #include "chat/ChatController.h"
@@ -44,6 +47,34 @@ int main(int argc, char *argv[])
 
     QQuickStyle::setStyle("Material");
 
+#ifndef Q_OS_ANDROID
+    // Only one copy may run per user (two copies would fight over the ports and the database).
+    // Android's launchMode="singleTask" already guarantees this there.
+    QString runDir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    if (runDir.isEmpty())
+        runDir = QDir::tempPath();
+    const QString userTag = qEnvironmentVariable("USER", qEnvironmentVariable("USERNAME", "user"));
+    const QString serverName = "letschat-single-instance-" + userTag;
+    QLockFile instanceLock(runDir + "/letschat-" + userTag + ".lock");
+    instanceLock.setStaleLockTime(0);          // a crashed copy leaves a lock that is detected by its dead pid
+    if (!instanceLock.tryLock(0)) {
+        // Already running: ask that copy to show its window, then quit.
+        QLocalSocket other;
+        other.connectToServer(serverName);
+        if (other.waitForConnected(1500)) {
+            other.write("show");
+            other.waitForBytesWritten(1500);
+        }
+        qInfo() << "LetsChat is already running - bringing that window to the front.";
+        return 0;
+    }
+    QLocalServer::removeServer(serverName);
+    QLocalServer instanceServer;
+    instanceServer.setSocketOptions(QLocalServer::UserAccessOption);   // nobody else may poke it
+    if (!instanceServer.listen(serverName))
+        qWarning() << "Single-instance server:" << instanceServer.errorString();
+#endif
+
     // Backend objects. They live on the stack for the whole run, the engine only borrows them.
     AppConfig appConfig;
     DatabaseManager database;
@@ -60,6 +91,14 @@ int main(int argc, char *argv[])
     TransferService transfer(receiveDir, &security);
     BluetoothService bluetooth(receiveDir, &security);
     BackgroundService background;
+#ifndef Q_OS_ANDROID
+    QObject::connect(&instanceServer, &QLocalServer::newConnection, &background, [&]() {
+        while (QLocalSocket *c = instanceServer.nextPendingConnection()) {
+            c->deleteLater();
+            emit background.showWindowRequested();
+        }
+    });
+#endif
     MediaService media(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/voice");
     NotificationManager notifier;
     notifier.setBackgroundService(&background);

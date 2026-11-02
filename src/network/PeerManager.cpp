@@ -47,6 +47,13 @@ void PeerManager::setNickname(const QString &userId, const QString &nickname)
     m_db->setNickname(userId, nickname.trimmed());
 }
 
+void PeerManager::removePeer(const QString &userId)
+{
+    m_peerModel->remove(userId);
+    m_db->forgetPeer(userId);
+    QFile::remove(PeerListModel::avatarPath(userId));
+}
+
 void PeerManager::setAvatar(const QString &userId, const QString &hash)
 {
     m_peerModel->setAvatarHash(userId, hash);

@@ -16,6 +16,61 @@ Rectangle {
     signal peerChosen(string userId)
     signal profileRequested(string userId)
 
+    // True while a dialog of this page is open (so Esc / Back close it first)
+    readonly property bool dialogOpen: quickView.opened || deleteDialog.opened
+    function closeDialogs() { quickView.close(); deleteDialog.close() }
+    function askDelete(id, name) {
+        deleteDialog.peerId = id
+        deleteDialog.peerName = name
+        deleteDialog.open()
+    }
+
+    // Delete the conversation and forget the contact: when they appear again it is a brand new contact.
+    Popup {
+        id: deleteDialog
+        property string peerId
+        property string peerName
+        parent: Overlay.overlay
+        x: parent ? (parent.width - width) / 2 : 0
+        y: parent ? Math.max(60, parent.height / 4) : 0
+        width: Math.min(parent ? parent.width - 32 : 340, 380)
+        modal: true
+        focus: true
+        padding: 20
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onOpened: forceActiveFocus()
+        onClosed: { root.forceActiveFocus(); Qt.inputMethod.hide() }
+        background: Rectangle { radius: Theme.radius; color: Theme.surface; border.color: Theme.border }
+        ColumnLayout {
+            width: parent.width
+            spacing: 14
+            Label {
+                text: qsTr("Delete conversation?")
+                font.pixelSize: 18
+                font.weight: Font.DemiBold
+                color: Theme.text
+            }
+            Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.textSecondary
+                text: qsTr("All messages and files with %1 are removed from this device, and %1 is removed from your list together with the nickname and the saved security key. If they appear again you will meet as new contacts. They keep their own copy.")
+                      .arg(deleteDialog.peerName)
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Button { text: qsTr("Cancel"); flat: true; onClicked: deleteDialog.close() }
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: qsTr("Delete")
+                    highlighted: true
+                    Material.accent: Theme.error
+                    onClicked: { deleteDialog.close(); Chat.removeContact(deleteDialog.peerId) }
+                }
+            }
+        }
+    }
+
     // Tap on a picture: big picture (or initials) with "message" and "info" buttons.
     Popup {
         id: quickView
@@ -92,6 +147,19 @@ Rectangle {
                         onClicked: { quickView.close(); root.profileRequested(quickView.peerId) }
                     }
                     Label { Layout.alignment: Qt.AlignHCenter; text: qsTr("Info"); font.pixelSize: 12; color: Theme.textSecondary }
+                }
+                ColumnLayout {
+                    spacing: 4
+                    IconButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        implicitWidth: 52
+                        implicitHeight: 52
+                        iconName: "delete"
+                        iconSize: 26
+                        iconColor: Theme.error
+                        onClicked: { quickView.close(); root.askDelete(quickView.peerId, quickView.peerName) }
+                    }
+                    Label { Layout.alignment: Qt.AlignHCenter; text: qsTr("Delete"); font.pixelSize: 12; color: Theme.textSecondary }
                 }
             }
         }
@@ -216,6 +284,12 @@ Rectangle {
                 width: list.width
                 selected: userId === root.selectedId
                 onClicked: root.peerChosen(userId)
+                // desktop: right-click a row to delete it (long-press stays disabled on touch screens)
+                TapHandler {
+                    acceptedButtons: Qt.RightButton
+                    acceptedDevices: PointerDevice.Mouse
+                    onTapped: root.askDelete(userId, displayName)
+                }
                 onAvatarClicked: {
                     quickView.peerId = userId
                     quickView.peerName = displayName

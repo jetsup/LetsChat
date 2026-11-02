@@ -34,6 +34,8 @@ public:
     /** The name *we* give a peer (nickname) wins over what the peer broadcasts. */
     Q_INVOKABLE void setNickname(const QString &userId, const QString &nickname);
     void setAvatar(const QString &userId, const QString &hash);
+    /** Drop a contact from the list and the database; if it shows up again it is treated as new. */
+    void removePeer(const QString &userId);
     void startScanning() { m_discovery->startDiscovery(); }
     void setBackground(bool background) { m_discovery->setBackground(background); }
     void stopScanning() { m_discovery->stopDiscovery(); }

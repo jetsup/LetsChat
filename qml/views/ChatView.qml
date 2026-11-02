@@ -315,6 +315,36 @@ Rectangle {
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar {}
 
+            // WhatsApp-style notice at the very start of the conversation
+            header: Item {
+                width: list.width
+                height: encNotice.height + 16
+                Rectangle {
+                    id: encNotice
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    y: 8
+                    width: Math.min(parent.width - 48, 420)
+                    height: noticeRow.implicitHeight + 20
+                    radius: 10
+                    color: Qt.rgba(Theme.success.r, Theme.success.g, Theme.success.b, 0.12)
+                    RowLayout {
+                        id: noticeRow
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 8
+                        Icon { Layout.alignment: Qt.AlignTop; name: "lock"; size: 16; color: Theme.success }
+                        Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            font.pixelSize: 12
+                            color: Theme.text
+                            text: qsTr("Messages, photos, files and voice notes in this chat are end-to-end encrypted. Only you and %1 can read them. Tap the name above to compare the safety number.")
+                                  .arg(Chat.currentPeerName)
+                        }
+                    }
+                }
+            }
+
             section.property: "dayString"
             section.delegate: Item {
                 required property string section

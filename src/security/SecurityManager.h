@@ -37,6 +37,8 @@ public:
 
     Q_INVOKABLE QVariantMap peerSecurity(const QString &userId) const;
     Q_INVOKABLE void setVerified(const QString &userId, bool verified);
+    /** Forget everything about a contact (the pinned key itself is removed by DatabaseManager::forgetPeer). */
+    void forget(const QString &userId);
     /** Pins the new key of a contact whose key changed (clears the "verified" mark). */
     Q_INVOKABLE void acceptNewKey(const QString &userId);
 

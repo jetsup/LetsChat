@@ -103,6 +103,11 @@ void SecurityManager::setVerified(const QString &userId, bool verified)
     emit peerSecurityChanged(userId);
 }
 
+void SecurityManager::forget(const QString &userId)
+{
+    m_pendingKeys.remove(userId);
+}
+
 void SecurityManager::acceptNewKey(const QString &userId)
 {
     const auto it = m_pendingKeys.constFind(userId);

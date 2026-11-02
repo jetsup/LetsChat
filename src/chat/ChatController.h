@@ -70,6 +70,8 @@ public:
     Q_INVOKABLE void deleteMessage(const QString &messageId, bool forEveryone);
     /** Deletes the whole conversation with a peer from this device. */
     Q_INVOKABLE void deleteConversation(const QString &peerId);
+    /** Delete the conversation AND the contact: the next meeting starts from scratch. */
+    Q_INVOKABLE void removeContact(const QString &peerId);
     /** Row numbers (in the open conversation) of messages matching `text`. */
     Q_INVOKABLE QVariantList searchMessages(const QString &text) const;
     Q_INVOKABLE void copyText(const QString &text);

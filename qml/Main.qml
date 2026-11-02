@@ -93,8 +93,8 @@ ApplicationWindow {
         id: shell
         Item {
             id: shellRoot
-            property bool dialogOpen: chatView.dialogOpen
-            function closeDialogs() { chatView.closeDialogs() }
+            property bool dialogOpen: chatView.dialogOpen || contacts.dialogOpen
+            function closeDialogs() { chatView.closeDialogs(); contacts.closeDialogs() }
             Component.onCompleted: window.shell = shellRoot
             Component.onDestruction: if (window.shell === shellRoot) window.shell = null
 

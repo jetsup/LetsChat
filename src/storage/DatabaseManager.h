@@ -57,6 +57,8 @@ public:
     bool tombstoneMessage(const QString &messageId);
     /** Removes the whole conversation; returns the attachment files that belonged to it. */
     QStringList deleteConversation(const QString &conversationId);
+    /** Forget a contact completely: the peer row, its nickname, its pinned key and queued deletes. */
+    void forgetPeer(const QString &userId);
     // "delete for everyone" requests that still have to reach the peer
     void addPendingDelete(const QString &messageId, const QString &peerId);
     void removePendingDelete(const QString &messageId);

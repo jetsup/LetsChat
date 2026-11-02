@@ -76,6 +76,21 @@ int PeerListModel::indexOf(const QString &userId) const
     return -1;
 }
 
+void PeerListModel::remove(const QString &userId)
+{
+    const int i = indexOf(userId);
+    if (i < 0)
+        return;
+    beginRemoveRows({}, i, i);
+    m_peers.removeAt(i);
+    endRemoveRows();
+    const int online = onlineCount();
+    if (online != m_lastOnline) {
+        m_lastOnline = online;
+        emit onlineCountChanged();
+    }
+}
+
 const Peer *PeerListModel::find(const QString &userId) const
 {
     const int i = indexOf(userId);

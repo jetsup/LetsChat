@@ -75,6 +75,7 @@ public:
                    const QString &nickname = {}, const QString &firstSeen = {},
                    const QString &avatarHash = {});
     void setNickname(const QString &userId, const QString &nickname);
+    void remove(const QString &userId);
     void setAvatarHash(const QString &userId, const QString &hash);
     QVariantMap info(const QString &userId) const;
     static void setAvatarDir(const QString &dir) { s_avatarDir = dir; }

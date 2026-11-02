@@ -616,6 +616,19 @@ void ChatController::deleteConversation(const QString &peerId)
     m_peers->peers()->clearUnread(peerId);
 }
 
+void ChatController::removeContact(const QString &peerId)
+{
+    if (peerId.isEmpty())
+        return;
+    const bool wasOpen = (peerId == m_currentPeerId);
+    deleteConversation(peerId);
+    if (wasOpen)
+        closeChat();
+    m_security->forget(peerId);
+    m_peers->removePeer(peerId);      // list, nickname, pinned key, queued deletes, picture
+    emit notice(tr("Conversation deleted"));
+}
+
 QVariantList ChatController::searchMessages(const QString &text) const
 {
     return m_messages.search(text);

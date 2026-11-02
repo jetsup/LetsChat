@@ -417,6 +417,21 @@ QStringList DatabaseManager::deleteConversation(const QString &conversationId)
     return files;
 }
 
+void DatabaseManager::forgetPeer(const QString &userId)
+{
+    static const char *const sql[] = {
+        "DELETE FROM peers WHERE user_id = ?",
+        "DELETE FROM peer_keys WHERE user_id = ?",
+        "DELETE FROM pending_deletes WHERE peer_id = ?",
+    };
+    for (const char *s : sql) {
+        QSqlQuery q(m_db);
+        q.prepare(QLatin1String(s));
+        q.addBindValue(userId);
+        q.exec();
+    }
+}
+
 void DatabaseManager::addPendingDelete(const QString &messageId, const QString &peerId)
 {
     QSqlQuery q(m_db);
