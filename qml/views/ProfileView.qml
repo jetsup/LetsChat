@@ -14,6 +14,9 @@ Rectangle {
     property real topInset: 0
     property real bottomInset: 0
     signal closeRequested()
+    // Back (Android) closes the photo viewer / confirmation before leaving the page
+    readonly property bool dialogOpen: mediaViewer.opened || confirm.opened
+    function closeDialogs() { if (mediaViewer.opened) mediaViewer.close(); else confirm.close() }
 
     property var info: Peers.info(userId)
     property var sec: Security.peerSecurity(userId)
@@ -490,37 +493,7 @@ Rectangle {
         }
     }
 
-    // full-screen photo viewer (Esc / tap closes it)
-    Popup {
-        id: mediaViewer
-        property alias source: bigPhoto.source
-        parent: Overlay.overlay
-        width: parent ? parent.width : 0
-        height: parent ? parent.height : 0
-        modal: true
-        focus: true
-        padding: 0
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        onOpened: forceActiveFocus()
-        background: Rectangle { color: "#E6000000" }
-        Image {
-            id: bigPhoto
-            anchors.fill: parent
-            anchors.margins: 12
-            fillMode: Image.PreserveAspectFit
-            asynchronous: true
-            autoTransform: true
-        }
-        MouseArea { anchors.fill: parent; onClicked: mediaViewer.close() }
-        IconButton {
-            anchors.top: parent.top
-            anchors.right: parent.right
-            anchors.margins: 8
-            iconName: "close"
-            iconColor: "white"
-            onClicked: mediaViewer.close()
-        }
-    }
+    MediaViewer { id: mediaViewer; anchorItem: root }
 
     Popup {
         id: confirm
@@ -531,7 +504,7 @@ Rectangle {
         modal: true
         focus: true
         padding: 20
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: (Device.isAndroid ? Popup.NoAutoClose : Popup.CloseOnEscape) | Popup.CloseOnPressOutside
         onOpened: forceActiveFocus()
         background: Rectangle { radius: Theme.radius; color: Theme.surface; border.color: Theme.border }
         ColumnLayout {

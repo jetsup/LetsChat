@@ -36,6 +36,8 @@ public:
     void setAvatar(const QString &userId, const QString &hash);
     /** Drop a contact from the list and the database; if it shows up again it is treated as new. */
     void removePeer(const QString &userId);
+    /** Pull-to-refresh: forget what discovery knows and ask everyone on the network to announce. */
+    Q_INVOKABLE void refresh();
     void startScanning() { m_discovery->startDiscovery(); }
     void setBackground(bool background) { m_discovery->setBackground(background); }
     void stopScanning() { m_discovery->stopDiscovery(); }

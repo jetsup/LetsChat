@@ -14,7 +14,7 @@ DiscoveryService::DiscoveryService(QObject *parent)
     , m_retryTimer(new QTimer(this))
 {
     m_clock.start();
-    connect(m_broadcastTimer, &QTimer::timeout, this, &DiscoveryService::sendDiscoveryBroadcast);
+    connect(m_broadcastTimer, &QTimer::timeout, this, [this] { sendDiscoveryBroadcast(); });
     connect(m_expireTimer, &QTimer::timeout, this, &DiscoveryService::expirePeers);
     connect(m_udpSocket, &QUdpSocket::readyRead, this, &DiscoveryService::readPendingDatagrams);
     // If the port was busy / the network was down at start-up, keep trying.
@@ -97,10 +97,15 @@ void DiscoveryService::reset()
     for (const QString &id : ids)
         emit peerLost(id);
     if (m_isRunning)
-        sendDiscoveryBroadcast();
+        sendDiscoveryBroadcast(true);
 }
 
-void DiscoveryService::sendDiscoveryBroadcast()
+void DiscoveryService::requestAnnounce()
+{
+    sendDiscoveryBroadcast(true);
+}
+
+void DiscoveryService::sendDiscoveryBroadcast(bool query)
 {
     if (m_localUserId.isEmpty() || !m_isRunning)
         return;
@@ -113,6 +118,8 @@ void DiscoveryService::sendDiscoveryBroadcast()
     message["alias"] = m_localAlias;
     message["deviceName"] = m_localDeviceName;
     message["av"] = m_localAvatar;
+    if (query)
+        message["q"] = true;          // "please announce yourself now"
     const QByteArray data = QJsonDocument(message).toJson(QJsonDocument::Compact);
 
     bool sent = false;
@@ -162,6 +169,13 @@ void DiscoveryService::processDiscoveryMessage(const QJsonObject &msg, const QSt
     const QString alias = msg["alias"].toString();
     const QString device = msg["deviceName"].toString();
     const QString avatar = msg["av"].toString();
+
+    // A refresh request from someone else: answer at once (but never more than twice a second).
+    if (msg["q"].toBool() && userId != m_localUserId && m_isRunning
+        && (!m_lastAnswer.isValid() || m_lastAnswer.elapsed() > 500)) {
+        m_lastAnswer.start();
+        sendDiscoveryBroadcast(false);
+    }
 
     auto it = m_known.find(userId);
     const bool changed = it == m_known.end() || it->ip != senderIp || it->alias != alias

@@ -14,7 +14,7 @@ Popup {
 
     parent: Overlay.overlay
     modal: true
-    closePolicy: Popup.CloseOnEscape
+    closePolicy: Device.isAndroid ? Popup.NoAutoClose : Popup.CloseOnEscape
     padding: 0
     width: Math.min(parent ? parent.width - 24 : 400, 560)
     height: Math.min(parent ? parent.height - 120 : 600, 760)

@@ -47,8 +47,15 @@ void PeerManager::setNickname(const QString &userId, const QString &nickname)
     m_db->setNickname(userId, nickname.trimmed());
 }
 
+void PeerManager::refresh()
+{
+    m_discovery->reset();             // everyone is re-discovered from scratch...
+    m_discovery->requestAnnounce();   // ...and is asked to announce right now
+}
+
 void PeerManager::removePeer(const QString &userId)
 {
+    m_discovery->forget(userId);      // if they are still on the network they are found again as new
     m_peerModel->remove(userId);
     m_db->forgetPeer(userId);
     QFile::remove(PeerListModel::avatarPath(userId));
@@ -63,13 +70,18 @@ void PeerManager::setAvatar(const QString &userId, const QString &hash)
 void PeerManager::checkAvatar(const QString &userId, const QString &hash, const QString &ip)
 {
     const Peer *p = m_peerModel->find(userId);
-    if (!p || p->avatarHash == hash)
+    if (!p)
         return;
-    if (hash.isEmpty()) {                    // the peer removed its picture
+    if (hash.isEmpty()) {                    // the peer has no picture (or removed it): keep nothing of it
         QFile::remove(PeerListModel::avatarPath(userId));
-        setAvatar(userId, {});
+        if (!p->avatarHash.isEmpty()) {
+            qInfo() << "Profile picture of" << userId << "removed";
+            setAvatar(userId, {});
+        }
         return;
     }
+    if (p->avatarHash == hash && QFile::exists(PeerListModel::avatarPath(userId)))
+        return;
     emit avatarNeeded(userId, ip);
 }
 

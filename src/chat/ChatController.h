@@ -72,6 +72,8 @@ public:
     Q_INVOKABLE void deleteConversation(const QString &peerId);
     /** Delete the conversation AND the contact: the next meeting starts from scratch. */
     Q_INVOKABLE void removeContact(const QString &peerId);
+    /** Look for people again (pull-to-refresh). */
+    Q_INVOKABLE void refreshPeers();
     /** Row numbers (in the open conversation) of messages matching `text`. */
     Q_INVOKABLE QVariantList searchMessages(const QString &text) const;
     /** Photos, files and voice notes exchanged with a contact (newest first), for the Contact info page. */

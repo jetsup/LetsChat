@@ -32,6 +32,10 @@ public:
                       const QString &avatarHash = {});
     /** Forget every known peer (used when we move to another network) and announce again. */
     void reset();
+    /** Forget one peer so its next announcement is treated as a first meeting. */
+    void forget(const QString &userId) { m_known.remove(userId); }
+    /** Ask everybody on the network to announce themselves right now (pull-to-refresh). */
+    void requestAnnounce();
 
 signals:
     void peerDiscovered(const QString &userId, const QString &alias, const QString &deviceName,
@@ -40,7 +44,7 @@ signals:
     void runningChanged();
 
 private:
-    void sendDiscoveryBroadcast();
+    void sendDiscoveryBroadcast(bool query = false);
     void readPendingDatagrams();
     void expirePeers();
     void processDiscoveryMessage(const QJsonObject &message, const QString &senderIp);
@@ -53,6 +57,7 @@ private:
     QTimer *m_expireTimer;
     QTimer *m_retryTimer;
     QElapsedTimer m_clock;
+    QElapsedTimer m_lastAnswer;
     int m_intervalMs = 3000;
     bool m_isRunning = false;
     bool m_wanted = false;

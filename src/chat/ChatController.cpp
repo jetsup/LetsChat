@@ -616,6 +616,12 @@ void ChatController::deleteConversation(const QString &peerId)
     m_peers->peers()->clearUnread(peerId);
 }
 
+void ChatController::refreshPeers()
+{
+    if (m_started)
+        m_peers->refresh();
+}
+
 void ChatController::removeContact(const QString &peerId)
 {
     if (peerId.isEmpty())

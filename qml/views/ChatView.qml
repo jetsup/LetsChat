@@ -717,38 +717,11 @@ Rectangle {
         return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2)
     }
 
-    // full-screen image viewer
-    Popup {
+    // full-screen image viewer (closed by X / Esc / Back, never by tapping the picture)
+    MediaViewer {
         id: viewer
-        property alias source: big.source
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        width: parent ? parent.width : 0
-        height: parent ? parent.height : 0
-        modal: true
-        focus: true
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        padding: 0
-        onOpened: forceActiveFocus()
+        anchorItem: root
         onClosed: root.afterPopup()
-        background: Rectangle { color: "#E6000000" }
-        Image {
-            id: big
-            anchors.fill: parent
-            anchors.margins: 12
-            fillMode: Image.PreserveAspectFit
-            asynchronous: true
-            autoTransform: true
-        }
-        MouseArea { anchors.fill: parent; onClicked: viewer.close() }
-        IconButton {
-            anchors.top: parent.top
-            anchors.right: parent.right
-            anchors.margins: 8
-            iconName: "close"
-            iconColor: "white"
-            onClicked: viewer.close()
-        }
     }
 
     // ------------------------------------------------------------------ message menu / delete chat
@@ -787,7 +760,7 @@ Rectangle {
         modal: true
         focus: true
         padding: 0
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: (Device.isAndroid ? Popup.NoAutoClose : Popup.CloseOnEscape) | Popup.CloseOnPressOutside
         width: phone ? root.width : 320
         x: (root.width - width) / 2
         y: phone ? root.height - height : Math.max(60, (root.height - height) / 3)
@@ -850,7 +823,7 @@ Rectangle {
         modal: true
         focus: true
         padding: 0
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: (Device.isAndroid ? Popup.NoAutoClose : Popup.CloseOnEscape) | Popup.CloseOnPressOutside
         width: phone ? root.width : 380
         height: phone ? root.height * 0.72 : Math.min(root.height - 120, 560)
         x: (root.width - width) / 2
@@ -943,7 +916,7 @@ Rectangle {
         modal: true
         focus: true
         padding: 20
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: (Device.isAndroid ? Popup.NoAutoClose : Popup.CloseOnEscape) | Popup.CloseOnPressOutside
         onOpened: forceActiveFocus()
         onClosed: root.afterPopup()
         background: Rectangle { radius: Theme.radius; color: Theme.surface; border.color: Theme.border }

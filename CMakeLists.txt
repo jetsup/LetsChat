@@ -67,6 +67,7 @@ qt_add_qml_module(appLetsChat
         qml/components/TransportBadge.qml
         qml/components/Toast.qml
         qml/components/VoiceNote.qml
+        qml/components/MediaViewer.qml
         qml/dialogs/PhotoDialog.qml
         qml/dialogs/VoiceDialog.qml
         qml/views/OnboardingView.qml

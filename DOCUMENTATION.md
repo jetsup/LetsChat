@@ -37,6 +37,8 @@ Targets: Linux, Windows, macOS (desktop) and Android (Qt 6.12, tested on Android
 | Delete a conversation | Chat ⋮ menu → **Delete chat…**, or the same button on the Contact info page. Removes all messages and files with them from this device only. |
 | Delete a conversation **and the contact** | Tap a picture in the chat list → **Delete** (desktop: right-click the row). Removes the messages and files, the list entry, the nickname, the saved security key and queued deletes. If that person shows up again they are a brand-new contact (first-contact key pinning, no history). |
 | Single instance | Only one copy runs per user. Launching it again just brings the running window to the front (desktop: lock file + local socket in `main.cpp`; Android: `singleTask`). A crashed copy's stale lock is detected automatically. |
+| Refresh the list | Pull the chat list down and let go (touch or mouse), or press the refresh button in the header. Everybody on the network is asked to announce themselves immediately. |
+| View / zoom / save a photo | Tap a photo. Pinch, mouse wheel, double-tap or the +/- buttons zoom; drag pans. Close with X, Esc (desktop) or Back (Android) - tapping the picture does not close it. The download button saves to Pictures/LetsChat (gallery on Android). |
 | Encryption notice | Every chat starts with a notice that messages are end-to-end encrypted; the header shows 🔒 and whether the contact is verified. |
 | Esc (desktop) | Closes the topmost thing: image viewer / dialog → page → the open chat (the right panel then asks you to select a conversation). |
 | Settings | Gear icon: name, theme (System/Light/Dark), background running, notifications, Bluetooth switch. |

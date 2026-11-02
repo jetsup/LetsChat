@@ -94,11 +94,20 @@ void BluetoothService::setLocalInfo(const QString &userId, const QString &alias,
                                     const QString &deviceName, const QString &avatarHash,
                                     const QString &avatarPath)
 {
+    const bool changed = m_localAvatarHash != avatarHash || m_localAlias != alias;
     m_localAvatarHash = avatarHash;
     m_localAvatarPath = avatarPath;
     m_localUserId = userId;
     m_localAlias = alias;
     m_localDeviceName = deviceName;
+    // Tell everybody we are linked with right away: the hello is idempotent on the other side.
+    if (changed && !userId.isEmpty()) {
+        for (auto it = m_links.constBegin(); it != m_links.constEnd(); ++it)
+            if (!it->userId.isEmpty())
+                sendFrame(it.key(), {{"type", "hello"}, {"v", AppConfig::PROTOCOL_VERSION},
+                                     {"userId", m_localUserId}, {"alias", m_localAlias},
+                                     {"deviceName", m_localDeviceName}, {"av", m_localAvatarHash}});
+    }
 }
 
 void BluetoothService::ensurePermission(const std::function<void()> &granted)

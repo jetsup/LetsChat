@@ -36,6 +36,8 @@ public:
     Q_INVOKABLE void cancelRecording();
     Q_INVOKABLE void capturePhoto();
     Q_INVOKABLE void discardFile(const QUrl &file);
+    /** Copies a picture into the user's gallery / Pictures folder. Returns where it went ("" = failed). */
+    Q_INVOKABLE QString saveImage(const QUrl &file);
 
 signals:
     void recordingChanged();

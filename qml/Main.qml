@@ -25,6 +25,7 @@ ApplicationWindow {
     // "", "settings", "bluetooth" or "profile" (of profileUserId)
     property string overlay: ""
     property string profileUserId: ""
+    property Item overlayItem: null      // the page currently shown over the lists (set by its Loader)
     onOverlayChanged: Qt.inputMethod.hide()
     function showProfile(id) { profileUserId = id; overlay = "profile" }
 
@@ -34,7 +35,9 @@ ApplicationWindow {
 
     // Back (Android) always steps back one screen: page -> chat list, chat -> list, list -> background.
     property Item shell: null            // set by the main screen so Back can close its dialogs
+    readonly property bool overlayDialogOpen: overlayItem !== null && overlayItem.dialogOpen === true
     readonly property int backDepth: (shell && shell.dialogOpen ? 1 : 0)
+                                     + (overlayDialogOpen ? 1 : 0)
                                      + (overlay !== "" ? 1 : 0)
                                      + (!wide && Chat.hasCurrentPeer ? 1 : 0)
     Binding { target: Background; property: "backDepth"; value: window.backDepth; when: Device.isAndroid }
@@ -49,7 +52,9 @@ ApplicationWindow {
     }
 
     function handleBack() {
-        if (shell && shell.dialogOpen) {
+        if (overlayDialogOpen) {
+            overlayItem.closeDialogs()
+        } else if (shell && shell.dialogOpen) {
             shell.closeDialogs()
         } else if (overlay !== "") {
             overlay = ""
@@ -71,7 +76,8 @@ ApplicationWindow {
         // "select a conversation" panel again.  Popups handle their own Esc first.
         Keys.onEscapePressed: (event) => {
             if (!Device.isAndroid) {
-                if (shell && shell.dialogOpen) shell.closeDialogs()
+                if (overlayDialogOpen) overlayItem.closeDialogs()
+                else if (shell && shell.dialogOpen) shell.closeDialogs()
                 else if (overlay !== "") overlay = ""
                 else if (Chat.hasCurrentPeer) Chat.closeChat()
             }
@@ -80,7 +86,7 @@ ApplicationWindow {
 
         Loader {
             anchors.fill: parent
-            sourceComponent: Identity.onboarded ? shell : onboarding
+            sourceComponent: Identity.onboarded ? shellComponent : onboarding
         }
     }
 
@@ -90,7 +96,7 @@ ApplicationWindow {
     }
 
     Component {
-        id: shell
+        id: shellComponent       // NOT "shell": that would shadow the property of the same name
         Item {
             id: shellRoot
             property bool dialogOpen: chatView.dialogOpen || contacts.dialogOpen
@@ -138,6 +144,8 @@ ApplicationWindow {
             }
 
             Loader {
+                id: overlayLoader
+                onItemChanged: window.overlayItem = item
                 anchors.fill: parent
                 z: 10
                 active: window.overlay !== ""

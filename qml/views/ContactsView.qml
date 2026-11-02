@@ -16,6 +16,15 @@ Rectangle {
     signal peerChosen(string userId)
     signal profileRequested(string userId)
 
+    // pull the list down (or press the refresh button) to look for people again
+    property bool refreshing: false
+    function doRefresh() {
+        Chat.refreshPeers()
+        refreshing = true
+        refreshTimer.restart()
+    }
+    Timer { id: refreshTimer; interval: 2500; onTriggered: root.refreshing = false }
+
     // True while a dialog of this page is open (so Esc / Back close it first)
     readonly property bool dialogOpen: quickView.opened || deleteDialog.opened
     function closeDialogs() { quickView.close(); deleteDialog.close() }
@@ -37,7 +46,7 @@ Rectangle {
         modal: true
         focus: true
         padding: 20
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: (Device.isAndroid ? Popup.NoAutoClose : Popup.CloseOnEscape) | Popup.CloseOnPressOutside
         onOpened: forceActiveFocus()
         onClosed: { root.forceActiveFocus(); Qt.inputMethod.hide() }
         background: Rectangle { radius: Theme.radius; color: Theme.surface; border.color: Theme.border }
@@ -85,7 +94,7 @@ Rectangle {
         modal: true
         focus: true
         padding: 24
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: (Device.isAndroid ? Popup.NoAutoClose : Popup.CloseOnEscape) | Popup.CloseOnPressOutside
         onOpened: forceActiveFocus()
         // A popup hands focus back to whatever had it before - a text field, which pops the keyboard
         // up (and keeps it up).  Give focus to a plain item instead and make sure no keyboard stays.
@@ -203,6 +212,11 @@ Rectangle {
                 }
 
                 IconButton {
+                    iconName: "refresh"
+                    iconColor: Theme.textSecondary
+                    onClicked: root.doRefresh()
+                }
+                IconButton {
                     iconName: "bluetooth"
                     iconColor: Bluetooth.enabled && Bluetooth.listening ? Theme.bluetooth : Theme.textSecondary
                     onClicked: root.openBluetooth()
@@ -270,6 +284,24 @@ Rectangle {
 
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.border }
 
+        // ---- "searching" strip while refreshing / being pulled
+        Item {
+            Layout.fillWidth: true
+            Layout.preferredHeight: (root.refreshing || list.pulled) ? 34 : 0
+            clip: true
+            Behavior on Layout.preferredHeight { NumberAnimation { duration: 120 } }
+            RowLayout {
+                anchors.centerIn: parent
+                spacing: 8
+                BusyIndicator { running: root.refreshing; implicitWidth: 22; implicitHeight: 22; visible: root.refreshing }
+                Label {
+                    font.pixelSize: 12
+                    color: Theme.textSecondary
+                    text: root.refreshing ? qsTr("Looking for people…") : qsTr("Release to refresh")
+                }
+            }
+        }
+
         // ---- peers
         ListView {
             id: list
@@ -277,7 +309,15 @@ Rectangle {
             Layout.fillHeight: true
             clip: true
             model: Peers.model
-            boundsBehavior: Flickable.StopAtBounds
+            // dragging past the top (touch or mouse) and letting go refreshes
+            boundsBehavior: Flickable.DragOverBounds
+            flickableDirection: Flickable.VerticalFlick
+            property bool pulled: false
+            onContentYChanged: if (dragging && contentY - originY < -70) pulled = true
+            onDraggingChanged: if (!dragging) {
+                if (pulled) root.doRefresh()
+                pulled = false
+            }
             ScrollBar.vertical: ScrollBar {}
 
             delegate: PeerItem {

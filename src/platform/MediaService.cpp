@@ -154,6 +154,36 @@ void MediaService::discardFile(const QUrl &file)
         QFile::remove(file.toLocalFile());
 }
 
+QString MediaService::saveImage(const QUrl &file)
+{
+    const QString src = file.toLocalFile();
+    if (src.isEmpty() || !QFileInfo::exists(src))
+        return {};
+    const QFileInfo info(src);
+    QString name = info.fileName();
+    if (info.suffix().isEmpty())
+        name += ".jpg";
+#ifdef Q_OS_ANDROID
+    QJniObject context = QNativeInterface::QAndroidApplication::context();
+    const QJniObject where = QJniObject::callStaticObjectMethod(
+        "com/smalnets/letschat/MediaSaver", "saveImage",
+        "(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+        context.object(), QJniObject::fromString(src).object<jstring>(),
+        QJniObject::fromString(name).object<jstring>());
+    return where.isValid() ? where.toString() : QString();
+#else
+    QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    if (dir.isEmpty())
+        dir = QDir::homePath();
+    dir += "/LetsChat";
+    QDir().mkpath(dir);
+    QString dest = dir + "/" + name;
+    for (int n = 1; QFile::exists(dest); ++n)            // never overwrite an earlier save
+        dest = dir + "/" + info.completeBaseName() + QString(" (%1).").arg(n) + (info.suffix().isEmpty() ? "jpg" : info.suffix());
+    return QFile::copy(src, dest) ? dest : QString();
+#endif
+}
+
 void MediaService::capturePhoto()
 {
 #ifdef Q_OS_ANDROID
